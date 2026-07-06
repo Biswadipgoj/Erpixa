@@ -54,7 +54,11 @@ function AppLayout() {
   );
 }
 
-export default function App() {
+/**
+ * AppShell — renders after the /auth/callback route is ruled out.
+ * All hooks live here so they never run during the OAuth code-exchange flow.
+ */
+function AppShell() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const initialize = useAuthStore((s) => s.initialize);
   const fetchData = useDataStore((s) => s.fetchData);
@@ -62,7 +66,6 @@ export default function App() {
   const authLoading = useAuthStore((s) => s.loading);
 
   useEffect(() => {
-    // Initialize Supabase auth session
     initialize();
   }, [initialize]);
 
@@ -71,12 +74,6 @@ export default function App() {
       fetchData();
     }
   }, [isAuthenticated, fetchData]);
-
-  // /auth/callback must ALWAYS be accessible regardless of auth state.
-  // It handles the OAuth code exchange before any session exists.
-  if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback') {
-    return <AuthCallbackPage />;
-  }
 
   if (authLoading) {
     return (
@@ -99,4 +96,15 @@ export default function App() {
   }
 
   return isAuthenticated ? <AppLayout /> : <LoginPage />;
+}
+
+/**
+ * App — top-level router. Intercepts /auth/callback BEFORE any hooks run
+ * so that initialize() / getSession() never silently consumes the PKCE code.
+ */
+export default function App() {
+  // Must be evaluated before any hook — safe because it's a plain read.
+  const isCallback = typeof window !== 'undefined' && window.location.pathname === '/auth/callback';
+  if (isCallback) return <AuthCallbackPage />;
+  return <AppShell />;
 }
