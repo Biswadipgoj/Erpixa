@@ -263,16 +263,27 @@ function LoadingView({ state }: { state: CallbackState }) {
 /** Human-readable label for OAuth error codes returned by the provider. */
 function humaniseProviderError(code: string): string {
   const map: Record<string, string> = {
-    access_denied:      'Access denied by Google',
+    access_denied:         'Access denied by Google',
     redirect_uri_mismatch: 'Redirect URI mismatch',
-    invalid_client:     'Invalid OAuth client',
-    unauthorized_client: 'Unauthorised client',
-    server_error:       'Google server error',
+    invalid_client:        'Invalid OAuth client',
+    unauthorized_client:   'Unauthorised client',
+    server_error:          'Google OAuth app not published',
   };
   return map[code] ?? code.replace(/_/g, ' ');
 }
 
 function providerErrorHint(code: string): string {
+  if (code === 'server_error') {
+    return (
+      'Your Google OAuth app is in "Testing" mode — only manually added test users can sign in.\n\n' +
+      'To fix this:\n' +
+      '1. Go to Google Cloud Console → APIs & Services → OAuth consent screen\n' +
+      '2. If Status is "Testing": either\n' +
+      '   a) Add the user\'s email under "Test users" (quick fix), OR\n' +
+      '   b) Click "Publish App" to allow any Google account (recommended for production)\n' +
+      '3. Save and try signing in again'
+    );
+  }
   if (code === 'access_denied') {
     return 'You cancelled the sign-in or denied the required Google permissions. Try again and click "Allow".';
   }
