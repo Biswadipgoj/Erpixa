@@ -20,10 +20,11 @@ export const supabase = createClient(
     auth: {
       autoRefreshToken: true,
       persistSession: true,
-      detectSessionInUrl: true,
-      // PKCE is required for secure OAuth code exchange in SPAs.
-      // It binds the auth code to the client that initiated the request,
-      // preventing "Unable to exchange external code" errors.
+      // Disabled so Supabase's internal _initialize() does NOT silently attempt
+      // the PKCE exchange. AuthCallbackPage handles the exchange manually with
+      // full error capture. Enabling this causes a race where the auto-exchange
+      // consumes the one-time code before we can surface a real error message.
+      detectSessionInUrl: false,
       flowType: 'pkce',
     },
   }

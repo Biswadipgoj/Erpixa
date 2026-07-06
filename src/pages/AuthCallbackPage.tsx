@@ -1,263 +1,340 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 /**
- * AuthCallbackPage — handles the OAuth redirect from Supabase/Google.
+ * AuthCallbackPage — handles the OAuth redirect from Supabase/Google (PKCE flow).
  *
- * Flow (Supabase PKCE with detectSessionInUrl: true):
- *  1. User clicks "Continue with Google" → redirected to Google.
+ * Flow:
+ *  1. User clicks "Continue with Google" → signInWithOAuth stores code_verifier
+ *     in localStorage and redirects to Google.
  *  2. Google authenticates → redirects to <origin>/auth/callback?code=xxx
- *  3. Supabase JS client auto-exchanges the PKCE code via detectSessionInUrl.
- *  4. onAuthStateChange fires with SIGNED_IN event.
- *  5. This page listens for that event and navigates to the dashboard.
+ *  3. This page reads `code` and calls exchangeCodeForSession() with the
+ *     stored code_verifier → Supabase validates and creates a session.
+ *  4. On success → navigate to dashboard.
  *
- * ⚠️  Do NOT call exchangeCodeForSession() here manually.
- *     With detectSessionInUrl: true, the Supabase client already does it
- *     internally. Calling it again would attempt to spend the one-time code
- *     a second time → "Unable to exchange external code" error.
+ * ⚠️  App.tsx returns this component BEFORE any hooks run on /auth/callback,
+ *     so initialize()/getSession() never races with our exchange.
+ *     supabase.ts sets detectSessionInUrl:false so the client does NOT
+ *     auto-exchange the code during createClient(), leaving us full control.
  */
 
+type Status = 'loading' | 'error' | 'success';
+
 interface CallbackState {
-  status: 'loading' | 'error' | 'success';
+  status: Status;
   message: string;
   detail?: string;
   hint?: string;
+  supabaseCode?: string;
 }
 
-const REDIRECT_DELAY_MS = 3500;
+const REDIRECT_DELAY_MS = 4000;
 
 export default function AuthCallbackPage() {
   const navigate = useNavigate();
-  const [state, setState] = useState<CallbackState>({ status: 'loading', message: 'Completing sign-in…' });
-  const listenerSet = useRef(false);
+  const [state, setState] = useState<CallbackState>({
+    status: 'loading',
+    message: 'Completing sign-in…',
+  });
+  const didRun = useRef(false);
 
   useEffect(() => {
-    if (listenerSet.current) return;
-    listenerSet.current = true;
+    // React StrictMode guard — only run once
+    if (didRun.current) return;
+    didRun.current = true;
 
-    const params = new URLSearchParams(window.location.search);
-    const errorParam = params.get('error');
-    const errorDesc  = params.get('error_description');
+    handleCallback();
 
-    // ── Explicit OAuth error returned in the URL ─────────────────────────────
-    if (errorParam) {
-      const raw = errorDesc ?? errorParam;
-      const { message, hint } = friendlyError(raw, errorParam);
-      console.error('[AuthCallback] OAuth error in URL:', raw);
-      setState({ status: 'error', message, detail: raw, hint });
-      setTimeout(() => {
-        navigate(`/login?error=${encodeURIComponent(raw)}`, { replace: true });
-      }, REDIRECT_DELAY_MS);
-      return;
+    async function handleCallback() {
+      // ── Guard: Supabase not configured ─────────────────────────────────────
+      if (!isSupabaseConfigured) {
+        showError({
+          message: 'Supabase is not configured.',
+          detail: 'VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are missing or use placeholder values.',
+          hint: 'Set real Supabase credentials in your Vercel project → Settings → Environment Variables, then redeploy.',
+        });
+        return;
+      }
+
+      const params   = new URLSearchParams(window.location.search);
+      const code     = params.get('code');
+      const errParam = params.get('error');
+      const errDesc  = params.get('error_description');
+
+      console.log('[AuthCallback] URL params:', {
+        code: code ? `${code.slice(0, 8)}…` : null,
+        error: errParam,
+        error_description: errDesc,
+      });
+
+      // ── Explicit OAuth error in URL (from Google / Supabase) ────────────────
+      if (errParam) {
+        const raw = errDesc ?? errParam;
+        showError({
+          message: `Sign-in rejected: ${humaniseProviderError(errParam)}`,
+          detail: raw,
+          hint: providerErrorHint(errParam),
+        });
+        redirect(`/login?error=${encodeURIComponent(raw)}`);
+        return;
+      }
+
+      // ── No code at all ──────────────────────────────────────────────────────
+      if (!code) {
+        // Maybe we already have a session (user refreshed the page)
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          navigate('/', { replace: true });
+          return;
+        }
+        showError({
+          message: 'No authentication code was received.',
+          detail: 'The URL did not contain a ?code= parameter.',
+          hint: 'Please click "Continue with Google" on the sign-in page instead of navigating here directly.',
+        });
+        redirect('/login?error=No+auth+code+received');
+        return;
+      }
+
+      // ── PKCE code exchange ──────────────────────────────────────────────────
+      setState({ status: 'loading', message: 'Verifying with Google…' });
+      console.log('[AuthCallback] Calling exchangeCodeForSession…');
+
+      const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+
+      if (exchangeError) {
+        console.error('[AuthCallback] exchangeCodeForSession failed:', {
+          message: exchangeError.message,
+          status: exchangeError.status,
+          name: exchangeError.name,
+        });
+
+        showError({
+          message: 'Google sign-in failed — could not complete authentication.',
+          detail: `${exchangeError.message} (status ${exchangeError.status ?? 'unknown'})`,
+          supabaseCode: exchangeError.name,
+          hint: exchangeHint(exchangeError.message, exchangeError.status),
+        });
+        redirect(`/login?error=${encodeURIComponent(exchangeError.message)}`);
+        return;
+      }
+
+      // ── Success ─────────────────────────────────────────────────────────────
+      console.log('[AuthCallback] Session created for:', data.session?.user?.email);
+      setState({
+        status: 'success',
+        message: `Welcome, ${data.session?.user?.email ?? 'User'}!`,
+      });
+      navigate('/', { replace: true });
     }
 
-    // ── Listen for the SIGNED_IN event from Supabase's auto-exchange ─────────
-    // Supabase v2 with detectSessionInUrl:true + flowType:'pkce' exchanges the
-    // ?code= param automatically. We simply wait for the resulting SIGNED_IN event.
-    setState({ status: 'loading', message: 'Verifying with Google…' });
+    function showError(opts: Omit<CallbackState, 'status'>) {
+      setState({ status: 'error', ...opts });
+    }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('[AuthCallback] onAuthStateChange:', event, session?.user?.email ?? null);
-
-      if (event === 'SIGNED_IN' && session) {
-        setState({ status: 'success', message: `Welcome, ${session.user.email ?? 'User'}!` });
-        subscription.unsubscribe();
-        navigate('/', { replace: true });
-        return;
-      }
-
-      if (event === 'TOKEN_REFRESHED' && session) {
-        // Already had a valid session — just go to dashboard
-        subscription.unsubscribe();
-        navigate('/', { replace: true });
-        return;
-      }
-    });
-
-    // ── Fallback: check for an already-existing session ──────────────────────
-    // In case onAuthStateChange fired before we subscribed (rare but possible)
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        console.log('[AuthCallback] Session already exists, navigating to dashboard.');
-        subscription.unsubscribe();
-        navigate('/', { replace: true });
-      }
-    });
-
-    // ── Timeout: if nothing fires in 10s, show an error ─────────────────────
-    const timeout = setTimeout(() => {
-      subscription.unsubscribe();
-      const raw = 'Authentication timed out — no session was established.';
-      const { message, hint } = friendlyError('exchange', 'exchange_error');
-      setState({ status: 'error', message, detail: raw, hint });
-      setTimeout(() => {
-        navigate('/login?error=Authentication+timed+out.+Please+try+again.', { replace: true });
-      }, REDIRECT_DELAY_MS);
-    }, 10_000);
-
-    return () => {
-      clearTimeout(timeout);
-      subscription.unsubscribe();
-    };
+    function redirect(path: string) {
+      setTimeout(() => navigate(path, { replace: true }), REDIRECT_DELAY_MS);
+    }
   }, [navigate]);
 
   return (
     <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      height: '100vh', background: 'var(--bg-base, #0f0f14)', gap: 20, padding: '0 24px',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', height: '100vh',
+      background: 'var(--bg-base, #0f0f14)', gap: 20, padding: '0 24px',
     }}>
-      {state.status === 'error' ? (
-        <>
-          {/* Error icon */}
-          <div style={{
-            width: 60, height: 60, borderRadius: 18,
-            background: 'linear-gradient(135deg, #EF4444, #DC2626)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '1.75rem', boxShadow: '0 12px 32px rgba(239,68,68,0.45)',
-            animation: 'modalPop 0.35s cubic-bezier(0.34,1.56,0.64,1)',
-          }}>⚠️</div>
-
-          <div style={{ fontFamily: 'Outfit, sans-serif', fontWeight: 700, fontSize: '1.2rem', color: '#fff', textAlign: 'center' }}>
-            Authentication Failed
-          </div>
-
-          <div style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.65)', textAlign: 'center', maxWidth: 380, lineHeight: 1.6 }}>
-            {state.message}
-          </div>
-
-          {/* Hint box */}
-          {state.hint && (
-            <div style={{
-              maxWidth: 420, width: '100%',
-              padding: '14px 18px',
-              background: 'rgba(99,102,241,0.12)',
-              border: '1px solid rgba(99,102,241,0.3)',
-              borderRadius: 12,
-              fontSize: '0.82rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.7,
-              fontFamily: 'Inter, sans-serif',
-              whiteSpace: 'pre-line',
-            }}>
-              <div style={{ fontWeight: 700, color: '#A78BFA', marginBottom: 6 }}>💡 How to fix this</div>
-              <div>{state.hint}</div>
-            </div>
-          )}
-
-          {/* Technical detail (collapsible) */}
-          {state.detail && (
-            <details style={{ maxWidth: 420, width: '100%' }}>
-              <summary style={{
-                cursor: 'pointer', fontSize: '0.75rem',
-                color: 'rgba(255,255,255,0.3)', fontFamily: 'Inter, sans-serif',
-                userSelect: 'none', listStyle: 'none', textAlign: 'center',
-              }}>
-                Show technical details
-              </summary>
-              <div style={{
-                marginTop: 8, padding: '10px 14px',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 10,
-                fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)',
-                fontFamily: 'monospace', wordBreak: 'break-all',
-              }}>
-                {state.detail}
-              </div>
-            </details>
-          )}
-
-          <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.3)', fontFamily: 'Inter, sans-serif' }}>
-            Redirecting back to sign in…
-          </div>
-        </>
-      ) : state.status === 'success' ? (
-        <>
-          <div style={{
-            width: 60, height: 60, borderRadius: 18,
-            background: 'linear-gradient(135deg, #10B981, #059669)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '1.75rem', boxShadow: '0 12px 32px rgba(16,185,129,0.45)',
-          }}>✅</div>
-          <div style={{ fontFamily: 'Outfit, sans-serif', fontWeight: 700, fontSize: '1.2rem', color: '#fff' }}>
-            {state.message}
-          </div>
-          <div style={{ fontSize: '0.875rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Inter, sans-serif' }}>
-            Loading your workspace…
-          </div>
-        </>
-      ) : (
-        <>
-          {/* Loading state */}
-          <div style={{
-            width: 60, height: 60, borderRadius: 18,
-            background: 'linear-gradient(135deg, #6366F1 0%, #06B6D4 100%)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '1.75rem', boxShadow: '0 12px 32px rgba(99,102,241,0.45)',
-            animation: 'spin 1.5s linear infinite',
-          }}>✨</div>
-
-          <div style={{ fontFamily: 'Outfit, sans-serif', fontWeight: 700, fontSize: '1.1rem', color: '#fff' }}>
-            {state.message}
-          </div>
-
-          <div style={{ fontSize: '0.875rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Inter, sans-serif' }}>
-            Completing Google authentication
-          </div>
-        </>
-      )}
+      {state.status === 'error' ? <ErrorView state={state} /> :
+       state.status === 'success' ? <SuccessView state={state} /> :
+       <LoadingView state={state} />}
     </div>
   );
 }
 
-// ── Error message mapping ────────────────────────────────────────────────────
-function friendlyError(raw: string, code: string): { message: string; hint?: string } {
-  const lower = raw.toLowerCase();
+// ── Sub-views ────────────────────────────────────────────────────────────────
 
-  if (lower.includes('exchange') || lower.includes('external code') || code === 'exchange_error') {
-    return {
-      message: 'Google sign-in failed: the authentication code could not be exchanged.',
-      hint:
-        'This usually means the Redirect URL is not registered in your Supabase project.\n\n' +
-        '1. Open Supabase Dashboard → Authentication → URL Configuration\n' +
-        `2. Add "${window.location.origin}/auth/callback" to Redirect URLs\n` +
-        '3. Save and try again.\n\n' +
-        'Also make sure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in your .env file.',
-    };
+function ErrorView({ state }: { state: CallbackState }) {
+  return (
+    <>
+      <div style={{
+        width: 64, height: 64, borderRadius: 20,
+        background: 'linear-gradient(135deg, #EF4444, #DC2626)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '1.875rem', boxShadow: '0 12px 32px rgba(239,68,68,0.4)',
+        animation: 'modalPop 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+      }}>❌</div>
+
+      <div style={{ fontFamily: 'Outfit, sans-serif', fontWeight: 700, fontSize: '1.25rem', color: '#fff', textAlign: 'center' }}>
+        Authentication Failed
+      </div>
+
+      <div style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.7)', textAlign: 'center', maxWidth: 420, lineHeight: 1.7 }}>
+        {state.message}
+      </div>
+
+      {state.hint && (
+        <div style={{
+          maxWidth: 460, width: '100%', padding: '16px 20px',
+          background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+          borderRadius: 14, fontFamily: 'Inter, sans-serif',
+        }}>
+          <div style={{ fontWeight: 700, color: '#A78BFA', marginBottom: 8, fontSize: '0.82rem' }}>
+            💡 How to fix this
+          </div>
+          <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.75, whiteSpace: 'pre-line' }}>
+            {state.hint}
+          </div>
+        </div>
+      )}
+
+      {(state.detail || state.supabaseCode) && (
+        <details style={{ maxWidth: 460, width: '100%' }}>
+          <summary style={{
+            cursor: 'pointer', fontSize: '0.75rem',
+            color: 'rgba(255,255,255,0.35)', fontFamily: 'monospace',
+            listStyle: 'none', textAlign: 'center', userSelect: 'none',
+          }}>
+            ▸ Show technical details
+          </summary>
+          <div style={{
+            marginTop: 10, padding: '12px 16px',
+            background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 10, fontFamily: 'monospace', fontSize: '0.72rem',
+            color: 'rgba(255,255,255,0.45)', wordBreak: 'break-all', lineHeight: 1.8,
+          }}>
+            {state.supabaseCode && <div><strong>Code:</strong> {state.supabaseCode}</div>}
+            {state.detail && <div><strong>Detail:</strong> {state.detail}</div>}
+            <div><strong>Origin:</strong> {window.location.origin}</div>
+            <div><strong>Callback URL:</strong> {window.location.href.replace(/code=[^&]+/, 'code=REDACTED')}</div>
+          </div>
+        </details>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem', color: 'rgba(255,255,255,0.3)', fontFamily: 'Inter, sans-serif' }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#EF4444', display: 'inline-block', animation: 'pulse 1.5s ease-in-out infinite' }} />
+        Redirecting back to sign in…
+      </div>
+    </>
+  );
+}
+
+function SuccessView({ state }: { state: CallbackState }) {
+  return (
+    <>
+      <div style={{
+        width: 64, height: 64, borderRadius: 20,
+        background: 'linear-gradient(135deg, #10B981, #059669)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '1.875rem', boxShadow: '0 12px 32px rgba(16,185,129,0.4)',
+        animation: 'modalPop 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+      }}>✅</div>
+      <div style={{ fontFamily: 'Outfit, sans-serif', fontWeight: 700, fontSize: '1.2rem', color: '#fff' }}>
+        {state.message}
+      </div>
+      <div style={{ fontSize: '0.875rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Inter, sans-serif' }}>
+        Loading your workspace…
+      </div>
+    </>
+  );
+}
+
+function LoadingView({ state }: { state: CallbackState }) {
+  return (
+    <>
+      <div style={{
+        width: 64, height: 64, borderRadius: 20,
+        background: 'linear-gradient(135deg, #6366F1 0%, #06B6D4 100%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '1.875rem', boxShadow: '0 12px 32px rgba(99,102,241,0.4)',
+        animation: 'spin 1.5s linear infinite',
+      }}>✨</div>
+      <div style={{ fontFamily: 'Outfit, sans-serif', fontWeight: 700, fontSize: '1.1rem', color: '#fff' }}>
+        {state.message}
+      </div>
+      <div style={{ fontSize: '0.875rem', color: 'rgba(255,255,255,0.5)', fontFamily: 'Inter, sans-serif' }}>
+        Completing Google authentication
+      </div>
+    </>
+  );
+}
+
+// ── Error helpers ────────────────────────────────────────────────────────────
+
+/** Human-readable label for OAuth error codes returned by the provider. */
+function humaniseProviderError(code: string): string {
+  const map: Record<string, string> = {
+    access_denied:      'Access denied by Google',
+    redirect_uri_mismatch: 'Redirect URI mismatch',
+    invalid_client:     'Invalid OAuth client',
+    unauthorized_client: 'Unauthorised client',
+    server_error:       'Google server error',
+  };
+  return map[code] ?? code.replace(/_/g, ' ');
+}
+
+function providerErrorHint(code: string): string {
+  if (code === 'access_denied') {
+    return 'You cancelled the sign-in or denied the required Google permissions. Try again and click "Allow".';
+  }
+  if (code === 'redirect_uri_mismatch') {
+    return (
+      'The redirect URI in Google Cloud Console does not match Supabase\'s callback URL.\n\n' +
+      'In Google Cloud Console → Credentials → your OAuth client, add:\n' +
+      'https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback'
+    );
+  }
+  return 'Check your Google OAuth and Supabase configuration.';
+}
+
+/** Contextual hint based on the actual Supabase exchange error message/status. */
+function exchangeHint(message: string, status?: number): string {
+  const lower = message.toLowerCase();
+
+  if (lower.includes('pkce') || lower.includes('code verifier') || lower.includes('code_verifier')) {
+    return (
+      'The PKCE code verifier is missing. This happens when:\n' +
+      '• You opened the Google sign-in link in a different browser tab\n' +
+      '• Your browser cleared localStorage between the sign-in steps\n\n' +
+      'Fix: close any extra tabs and try signing in again from scratch.'
+    );
   }
 
-  if (lower.includes('redirect') || lower.includes('callback')) {
-    return {
-      message: 'OAuth redirect failed — the callback URL is not whitelisted.',
-      hint:
-        `Add "${window.location.origin}/auth/callback" to your Supabase ` +
-        'project\'s allowed Redirect URLs (Auth → URL Configuration).',
-    };
+  if (lower.includes('expired') || lower.includes('invalid_grant')) {
+    return (
+      'The authentication code expired before it could be used (codes are valid for ~5 minutes).\n\n' +
+      'Fix: click "Continue with Google" again and complete the sign-in promptly.'
+    );
   }
 
-  if (lower.includes('access_denied') || code === 'access_denied') {
-    return {
-      message: 'Access was denied by Google.',
-      hint: 'You may have cancelled the sign-in or denied the required permissions. Please try again.',
-    };
+  if (lower.includes('already') || lower.includes('used')) {
+    return (
+      'The authentication code was already used. This can happen if the page reloaded during sign-in.\n\n' +
+      'Fix: click "Continue with Google" again to get a fresh code.'
+    );
   }
 
-  if (lower.includes('email') && lower.includes('not confirmed')) {
-    return {
-      message: 'Your email address has not been confirmed yet.',
-      hint: 'Check your inbox for a verification link from Erpixa and click it before signing in.',
-    };
+  if (status === 400) {
+    return (
+      'Supabase rejected the code exchange (HTTP 400). Most likely causes:\n' +
+      '• The redirect URL "' + window.location.origin + '/auth/callback" is not in Supabase → Auth → URL Configuration\n' +
+      '• The Google OAuth redirect URI doesn\'t point to your Supabase project\'s callback\n\n' +
+      'Expected Google redirect URI: https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback'
+    );
   }
 
-  if (lower.includes('no_code') || code === 'no_code') {
-    return {
-      message: 'No authentication code was received from Google.',
-      hint: 'This can happen if you navigated to this page directly. Please click "Continue with Google" from the sign-in page.',
-    };
+  if (status === 401 || status === 403) {
+    return (
+      'Authentication credentials were rejected (HTTP ' + status + ').\n\n' +
+      'Check that VITE_SUPABASE_ANON_KEY in your Vercel environment variables is correct.\n' +
+      'Find it in: Supabase Dashboard → Project Settings → API → anon public'
+    );
   }
 
   // Generic fallback
-  return {
-    message: raw.length > 120 ? raw.slice(0, 120) + '…' : raw,
-    hint: 'If this keeps happening, check your Supabase project configuration or contact your administrator.',
-  };
+  return (
+    'Possible causes:\n' +
+    '• "' + window.location.origin + '/auth/callback" not in Supabase Redirect URLs\n' +
+    '• Google OAuth redirect URI doesn\'t point to Supabase (should be https://YOUR_PROJECT.supabase.co/auth/v1/callback)\n' +
+    '• VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY not set in Vercel environment variables'
+  );
 }
