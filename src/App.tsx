@@ -55,8 +55,8 @@ function AppLayout() {
 }
 
 /**
- * AppShell — renders after the /auth/callback route is ruled out.
- * All hooks live here so they never run during the OAuth code-exchange flow.
+ * AppShell — mounted for every route EXCEPT /auth/callback.
+ * Runs initialize() to restore any existing Supabase session.
  */
 function AppShell() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -99,12 +99,21 @@ function AppShell() {
 }
 
 /**
- * App — top-level router. Intercepts /auth/callback BEFORE any hooks run
- * so that initialize() / getSession() never silently consumes the PKCE code.
+ * App — root component.
+ *
+ * /auth/callback is handled as a dedicated Route so React Router manages
+ * the transition reactively. When AuthCallbackPage calls
+ * window.location.replace('/') after a successful exchange, the browser
+ * does a clean navigation, AppShell mounts, initialize() finds the new
+ * session in localStorage, and the real user data loads.
  */
 export default function App() {
-  // Must be evaluated before any hook — safe because it's a plain read.
-  const isCallback = typeof window !== 'undefined' && window.location.pathname === '/auth/callback';
-  if (isCallback) return <AuthCallbackPage />;
-  return <AppShell />;
+  return (
+    <Routes>
+      {/* OAuth callback — must be isolated so initialize() never races with the exchange */}
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      {/* Everything else goes through AppShell which owns the auth state */}
+      <Route path="/*" element={<AppShell />} />
+    </Routes>
+  );
 }

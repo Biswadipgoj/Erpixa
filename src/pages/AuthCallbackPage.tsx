@@ -85,7 +85,7 @@ export default function AuthCallbackPage() {
         // Maybe we already have a session (user refreshed the page)
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
-          navigate('/', { replace: true });
+          window.location.replace('/');
           return;
         }
         showError({
