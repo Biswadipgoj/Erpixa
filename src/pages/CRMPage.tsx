@@ -1,10 +1,19 @@
 import { useState } from 'react';
-import { useCurrencyStore, useCRMStore } from '../store';
+import { useCurrencyStore } from '../store';
 import { useDataStore } from '../store/dataStore';
+
+const CRM_STAGES = [
+  { id: 'new',        name: 'New',         color: '#6366F1', probability: 10 },
+  { id: 'qualified',  name: 'Qualified',   color: '#06B6D4', probability: 30 },
+  { id: 'proposal',   name: 'Proposal',    color: '#F59E0B', probability: 60 },
+  { id: 'negotiation',name: 'Negotiation', color: '#EC4899', probability: 80 },
+  { id: 'won',        name: 'Won',         color: '#10B981', probability: 100 },
+  { id: 'lost',       name: 'Lost',        color: '#EF4444', probability: 0 },
+];
 
 export default function CRMPage() {
   const formatMoney = useCurrencyStore((s) => s.formatMoney);
-  const crmStages = useCRMStore((s) => s.stages);
+  const crmStages = CRM_STAGES;
   const crmLeads = useDataStore((s) => s.leads);
   const [search, setSearch] = useState('');
 

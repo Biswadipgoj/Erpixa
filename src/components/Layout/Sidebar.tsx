@@ -1,224 +1,200 @@
+import { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useUIStore, useAuthStore } from '../../store';
-
-const MODULES = [
-  { id: 'dashboard',    path: '/',              label: 'Dashboard',     icon: '📊', color: '#7C3AED' },
-  { id: 'crm',          path: '/crm',           label: 'CRM',           icon: '🎯', color: '#4F46E5' },
-  { id: 'sales',        path: '/sales',         label: 'Sales',         icon: '💼', color: '#059669' },
-  { id: 'inventory',    path: '/inventory',     label: 'Inventory',     icon: '📦', color: '#D97706' },
-  { id: 'accounting',   path: '/accounting',    label: 'Accounting',    icon: '🧾', color: '#2563EB' },
-  { id: 'hr',           path: '/hr',            label: 'Human Resources', icon: '👥', color: '#DB2777' },
-  { id: 'projects',     path: '/projects',      label: 'Projects',      icon: '📋', color: '#7C3AED' },
-  { id: 'manufacturing',path: '/manufacturing', label: 'Manufacturing', icon: '🏭', color: '#DC2626' },
-  { id: 'helpdesk',     path: '/helpdesk',      label: 'Helpdesk',      icon: '🎫', color: '#0D9488', badge: '3' },
-  { id: 'website',      path: '/website',       label: 'Website',       icon: '🌐', color: '#EA580C' },
-  { id: 'marketing',    path: '/marketing',     label: 'Marketing',     icon: '📣', color: '#9333EA' },
-];
+import { useDataStore } from '../../store/dataStore';
+import { MODULES, SETTINGS_GRADIENT } from '../../lib/modules';
 
 export function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar, setCurrentModule } = useUIStore();
-  const { user, logout } = useAuthStore();
+  const { sidebarCollapsed, toggleSidebar, setCurrentModule, mobileNavOpen, setMobileNavOpen } = useUIStore();
+  const { user, signOut } = useAuthStore();
+  const openTickets = useDataStore((s) => s.tickets.filter((t) => t.status !== 'Resolved').length);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => { setMobileNavOpen(false); }, [location.pathname, setMobileNavOpen]);
 
   const handleNav = (path: string, label: string) => {
     navigate(path);
     setCurrentModule(label);
   };
 
-  return (
-    <nav className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
-      {/* Logo */}
-      <div className="sidebar-logo">
-        <div className="sidebar-logo-mark">
-          <span style={{ fontSize: '1.1rem' }}>✨</span>
-        </div>
-        {!sidebarCollapsed && (
-          <div className="sidebar-wordmark">
-            Buis <span>AI</span>
-          </div>
-        )}
-      </div>
-
-      {/* Nav */}
-      <div className="sidebar-nav">
-        <div className="sidebar-section-label">MAIN MENU</div>
-        {MODULES.slice(0, 5).map(m => {
-          const isActive = location.pathname === m.path;
-          return (
-            <div
-              key={m.id}
-              className={`nav-item${isActive ? ' active' : ''}`}
-              onClick={() => handleNav(m.path, m.label)}
-              title={sidebarCollapsed ? m.label : undefined}
-            >
-              <span className="nav-icon" style={{
-                fontSize: '1.05rem',
-                filter: isActive ? 'brightness(1.2)' : undefined,
-              }}>{m.icon}</span>
-              {!sidebarCollapsed && <span style={{ flex: 1 }}>{m.label}</span>}
-              {!sidebarCollapsed && m.badge && (
-                <span className="nav-badge">{m.badge}</span>
-              )}
-            </div>
-          );
-        })}
-
-        <div className="sidebar-section-label">OPERATIONS</div>
-        {MODULES.slice(5).map(m => {
-          const isActive = location.pathname === m.path;
-          return (
-            <div
-              key={m.id}
-              className={`nav-item${isActive ? ' active' : ''}`}
-              onClick={() => handleNav(m.path, m.label)}
-              title={sidebarCollapsed ? m.label : undefined}
-            >
-              <span className="nav-icon">{m.icon}</span>
-              {!sidebarCollapsed && <span style={{ flex: 1 }}>{m.label}</span>}
-              {!sidebarCollapsed && m.badge && (
-                <span className="nav-badge">{m.badge}</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Bottom: User + Settings */}
-      <div className="sidebar-bottom">
-        <div
-          className={`nav-item${location.pathname === '/settings' ? ' active' : ''}`}
-          onClick={() => handleNav('/settings', 'Settings')}
-          title={sidebarCollapsed ? 'Settings' : undefined}
-        >
-          <span className="nav-icon">⚙️</span>
-          {!sidebarCollapsed && <span style={{ flex: 1 }}>Settings</span>}
-        </div>
-
-        {/* Admin link — only for admins */}
-        {user?.role === 'admin' && (
-          <div
-            className={`nav-item${location.pathname === '/admin' ? ' active' : ''}`}
-            onClick={() => handleNav('/admin', 'Admin')}
-            title={sidebarCollapsed ? 'Admin Panel' : undefined}
-            style={{ background: location.pathname === '/admin' ? 'linear-gradient(135deg, rgba(124,58,237,0.3), rgba(79,70,229,0.3))' : undefined }}
-          >
-            <span className="nav-icon">🛡️</span>
-            {!sidebarCollapsed && <span style={{ flex: 1, color: '#A78BFA' }}>Admin Panel</span>}
-          </div>
-        )}
-
-        {!sidebarCollapsed && user && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 10, marginTop: 12,
-            padding: '10px 12px', background: 'rgba(255,255,255,0.10)', borderRadius: 12,
-          }}>
-            <div style={{
-              width: 34, height: 34, background: 'linear-gradient(135deg,#F59E0B,#EC4899)',
-              borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.75rem', fontWeight: 800, color: '#fff', flexShrink: 0,
-            }}>
-              {user.email.substring(0, 2).toUpperCase()}
-            </div>
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {(user as any).full_name || (user as any).name || 'Admin'}
-              </div>
-              <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.55)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {user.email}
-              </div>
-              {user?.role && (
-                <div style={{ fontSize: '0.65rem', color: 'rgba(167,139,250,0.9)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  {user.role === 'admin' ? '👑' : user.role === 'manager' ? '🎯' : '👤'} {user.role}
-                </div>
-              )}
-            </div>
-            <button
-              onClick={logout}
-              title="Logout"
-              style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.50)', cursor: 'pointer', fontSize: '0.875rem', padding: 4, borderRadius: 6, transition: 'all 0.15s' }}
-              onMouseEnter={e => (e.currentTarget.style.color = '#fff')}
-              onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.50)')}
-            >
-              ⇥
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Collapse toggle */}
-      <button className="sidebar-toggle" onClick={toggleSidebar} title={sidebarCollapsed ? 'Expand' : 'Collapse'}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          {sidebarCollapsed
-            ? <path d="m9 18 6-6-6-6" />
-            : <path d="m15 18-6-6 6-6" />}
-        </svg>
+  const renderItem = (m: (typeof MODULES)[number]) => {
+    const isActive = location.pathname === m.path;
+    const badge = m.id === 'helpdesk' && openTickets > 0 ? String(openTickets) : undefined;
+    return (
+      <button
+        key={m.id}
+        type="button"
+        className={`nav-item${isActive ? ' active' : ''}`}
+        onClick={() => handleNav(m.path, m.label)}
+        title={sidebarCollapsed ? m.label : undefined}
+        aria-current={isActive ? 'page' : undefined}
+      >
+        <span className="nav-icon" aria-hidden="true">{m.icon}</span>
+        {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left' }}>{m.label}</span>}
+        {!sidebarCollapsed && badge && <span className="nav-badge">{badge}</span>}
       </button>
-    </nav>
+    );
+  };
+
+  return (
+    <>
+      {mobileNavOpen && <div className="sidebar-scrim" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />}
+      <nav
+        className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileNavOpen ? ' open' : ''}`}
+        aria-label="Main navigation"
+      >
+        {/* Logo */}
+        <div className="sidebar-logo">
+          <div className="sidebar-logo-mark" aria-hidden="true">
+            <span style={{ fontSize: '1.1rem' }}>✨</span>
+          </div>
+          {!sidebarCollapsed && (
+            <div className="sidebar-wordmark">
+              Erp<span>ixa</span>
+            </div>
+          )}
+        </div>
+
+        {/* Nav */}
+        <div className="sidebar-nav">
+          <div className="sidebar-section-label">Main Menu</div>
+          {MODULES.slice(0, 5).map(renderItem)}
+
+          <div className="sidebar-section-label">Operations</div>
+          {MODULES.slice(5).map(renderItem)}
+        </div>
+
+        {/* Bottom: Settings + Admin + User */}
+        <div className="sidebar-bottom">
+          <button
+            type="button"
+            className={`nav-item${location.pathname === '/settings' ? ' active' : ''}`}
+            onClick={() => handleNav('/settings', 'Settings')}
+            title={sidebarCollapsed ? 'Settings' : undefined}
+            aria-current={location.pathname === '/settings' ? 'page' : undefined}
+          >
+            <span className="nav-icon" aria-hidden="true">⚙️</span>
+            {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left' }}>Settings</span>}
+          </button>
+
+          {user?.role === 'admin' && (
+            <button
+              type="button"
+              className={`nav-item${location.pathname === '/admin' ? ' active' : ''}`}
+              onClick={() => handleNav('/admin', 'Admin')}
+              title={sidebarCollapsed ? 'Admin Panel' : undefined}
+              aria-current={location.pathname === '/admin' ? 'page' : undefined}
+            >
+              <span className="nav-icon" aria-hidden="true">🛡️</span>
+              {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left', color: '#C4B5FD' }}>Admin Panel</span>}
+            </button>
+          )}
+
+          {!sidebarCollapsed && user && (
+            <div className="sidebar-user-card">
+              <div className="sidebar-user-avatar" aria-hidden="true">
+                {user.email.substring(0, 2).toUpperCase()}
+              </div>
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <div className="sidebar-user-name">{user.full_name}</div>
+                <div className="sidebar-user-email">{user.email}</div>
+                <div className="sidebar-user-role">{user.role}</div>
+              </div>
+              <button
+                type="button"
+                onClick={signOut}
+                title="Sign out"
+                aria-label="Sign out"
+                className="sidebar-signout-btn"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Collapse toggle (desktop) */}
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={toggleSidebar}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+            {sidebarCollapsed ? <path d="m9 18 6-6-6-6" /> : <path d="m15 18-6-6 6-6" />}
+          </svg>
+        </button>
+      </nav>
+    </>
   );
 }
 
 /* ─── App Switcher ─────────────────────────────────────────────── */
 export function AppSwitcher() {
   const { appSwitcherOpen, setAppSwitcherOpen } = useUIStore();
+  const setCurrentModule = useUIStore((s) => s.setCurrentModule);
   const navigate = useNavigate();
   const location = useLocation();
 
+  useEffect(() => {
+    if (!appSwitcherOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAppSwitcherOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [appSwitcherOpen, setAppSwitcherOpen]);
+
   if (!appSwitcherOpen) return null;
 
-  const GRAD_MAP: Record<string, string> = {
-    '/':              'linear-gradient(135deg,#7C3AED,#4F46E5)',
-    '/crm':           'linear-gradient(135deg,#4F46E5,#7C3AED)',
-    '/sales':         'linear-gradient(135deg,#059669,#06B6D4)',
-    '/inventory':     'linear-gradient(135deg,#D97706,#DC2626)',
-    '/accounting':    'linear-gradient(135deg,#2563EB,#6366F1)',
-    '/hr':            'linear-gradient(135deg,#DB2777,#9333EA)',
-    '/projects':      'linear-gradient(135deg,#7C3AED,#2563EB)',
-    '/manufacturing': 'linear-gradient(135deg,#DC2626,#EA580C)',
-    '/helpdesk':      'linear-gradient(135deg,#0D9488,#06B6D4)',
-    '/website':       'linear-gradient(135deg,#EA580C,#F59E0B)',
-    '/marketing':     'linear-gradient(135deg,#9333EA,#DB2777)',
-    '/settings':      'linear-gradient(135deg,#475569,#334155)',
+  const go = (path: string, label: string) => {
+    navigate(path);
+    setCurrentModule(label);
+    setAppSwitcherOpen(false);
   };
 
   return (
-    <div className="app-switcher-overlay" onClick={() => setAppSwitcherOpen(false)}>
-      <div className="app-switcher" onClick={e => e.stopPropagation()}>
+    <div className="app-switcher-overlay" onClick={() => setAppSwitcherOpen(false)} role="presentation">
+      <div className="app-switcher" role="dialog" aria-modal="true" aria-label="Module switcher" onClick={(e) => e.stopPropagation()}>
         <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: '1.25rem', color: 'var(--text-primary)' }}>
-              Buis AI Modules
+              Erpixa Modules
             </div>
             <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Navigate to any module</div>
           </div>
-          <button onClick={() => setAppSwitcherOpen(false)} style={{ background: 'var(--bg-subtle)', border: '1.5px solid var(--border)', borderRadius: 8, padding: '6px 12px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }}>✕ Close</button>
+          <button
+            type="button"
+            onClick={() => setAppSwitcherOpen(false)}
+            style={{ background: 'var(--bg-subtle)', border: '1.5px solid var(--border)', borderRadius: 8, padding: '6px 12px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }}
+          >
+            ✕ Close
+          </button>
         </div>
         <div className="app-grid">
-          {MODULES.map(m => (
-            <div
+          {MODULES.map((m) => (
+            <button
               key={m.id}
+              type="button"
               className={`app-item${location.pathname === m.path ? ' active-app' : ''}`}
-              onClick={() => { navigate(m.path); setAppSwitcherOpen(false); }}
-              style={{
-                background: location.pathname === m.path ? (GRAD_MAP[m.path] + '18') : undefined,
-                borderColor: location.pathname === m.path ? m.color + '44' : undefined,
-              }}
+              onClick={() => go(m.path, m.label)}
+              style={{ borderColor: location.pathname === m.path ? m.color + '44' : undefined }}
             >
-              <div className="app-item-icon" style={{ background: GRAD_MAP[m.path] }}>
+              <div className="app-item-icon" style={{ background: m.gradient }} aria-hidden="true">
                 <span style={{ filter: 'brightness(2)' }}>{m.icon}</span>
               </div>
               <div className="app-item-name">{m.label}</div>
-            </div>
+            </button>
           ))}
-          <div
-            className="app-item"
-            onClick={() => { navigate('/settings'); setAppSwitcherOpen(false); }}
-          >
-            <div className="app-item-icon" style={{ background: GRAD_MAP['/settings'] }}>
+          <button type="button" className="app-item" onClick={() => go('/settings', 'Settings')}>
+            <div className="app-item-icon" style={{ background: SETTINGS_GRADIENT }} aria-hidden="true">
               <span style={{ filter: 'brightness(2)' }}>⚙️</span>
             </div>
             <div className="app-item-name">Settings</div>
-          </div>
+          </button>
         </div>
       </div>
     </div>

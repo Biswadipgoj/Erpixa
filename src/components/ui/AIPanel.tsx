@@ -442,7 +442,7 @@ export default function AIPanel() {
     {
       id: '0',
       role: 'ai',
-      text: 'Hello! I\'m Buis AI, your intelligent business assistant. I have full access to your CRM, sales, inventory, accounting, HR, and operations data. How can I help you today?',
+      text: 'Hello! I\'m Erpixa AI, your intelligent business assistant. I have full access to your CRM, sales, inventory, accounting, HR, and operations data. How can I help you today?',
       timestamp: new Date(),
     },
   ]);
@@ -498,7 +498,7 @@ export default function AIPanel() {
             </div>
             <div>
               <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', lineHeight: 1 }}>
-                Buis <span style={{ background: 'var(--gradient-ai)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>AI</span> Assistant
+                Erpixa <span style={{ background: 'var(--gradient-ai)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>AI</span> Assistant
               </div>
               <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)', marginTop: 2 }}>
                 <span className="ai-orb-small" />  Connected to your live data
@@ -588,7 +588,7 @@ export default function AIPanel() {
             </button>
           </div>
           <div style={{ textAlign: 'center', marginTop: 8, fontSize: '0.7rem', color: 'var(--text-disabled)' }}>
-            Powered by Buis AI Engine · Responses use your live business data
+            Powered by Erpixa AI Engine · Responses use your live business data
           </div>
         </div>
       </div>

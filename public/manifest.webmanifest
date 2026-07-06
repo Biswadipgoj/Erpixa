@@ -1,0 +1,17 @@
+{
+  "name": "Erpixa — Business Management Platform",
+  "short_name": "Erpixa",
+  "description": "Intelligent Enterprise Management Platform. CRM, Sales, Inventory, Accounting, HR, Projects, Manufacturing and more.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#4F46E5",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

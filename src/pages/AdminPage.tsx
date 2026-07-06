@@ -33,9 +33,9 @@ export default function AdminPage() {
     if (!isConfigured) {
       // Demo data
       setUsers([
-        { id: '1', email: 'admin@buisai.com', full_name: 'Demo Admin', role: 'admin', company: 'Buis AI Corp', status: 'active', created_at: new Date().toISOString() },
-        { id: '2', email: 'manager@buisai.com', full_name: 'Sara Miles', role: 'manager', company: 'Buis AI Corp', status: 'active', created_at: new Date().toISOString() },
-        { id: '3', email: 'user@buisai.com', full_name: 'Paul Kim', role: 'user', company: 'Buis AI Corp', status: 'active', created_at: new Date().toISOString() },
+        { id: '1', email: 'admin@erpixa.com', full_name: 'Demo Admin', role: 'admin', company: 'Erpixa Corp', status: 'active', created_at: new Date().toISOString() },
+        { id: '2', email: 'manager@erpixa.com', full_name: 'Sara Miles', role: 'manager', company: 'Erpixa Corp', status: 'active', created_at: new Date().toISOString() },
+        { id: '3', email: 'user@erpixa.com', full_name: 'Paul Kim', role: 'user', company: 'Erpixa Corp', status: 'active', created_at: new Date().toISOString() },
       ]);
       setLoading(false);
       return;

@@ -5,7 +5,7 @@ import { notifications } from '../../data/mockData';
 
 export default function TopNav() {
   const { currentModule, appSwitcherOpen, setAppSwitcherOpen, notifPanelOpen, setNotifPanelOpen, aiPanelOpen, setAIPanelOpen } = useUIStore();
-  const { logout } = useAuthStore();
+  const { signOut } = useAuthStore();
   const [search, setSearch] = useState('');
   const notifRef = useRef<HTMLDivElement>(null);
   const unreadCount = notifications.filter(n => n.unread).length;
@@ -45,7 +45,7 @@ export default function TopNav() {
           </svg>
         </button>
         <div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-disabled)', fontWeight: 500 }}>Buis AI</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-disabled)', fontWeight: 500 }}>Erpixa</div>
           <div style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: '0.9375rem', color: 'var(--text-primary)', lineHeight: 1 }}>
             {currentModule}
           </div>
@@ -140,7 +140,7 @@ export default function TopNav() {
           }}
           onMouseEnter={e => !aiPanelOpen && ((e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)')}
           onMouseLeave={e => ((e.currentTarget as HTMLElement).style.transform = 'translateY(0)')}
-          title="Ask Buis AI"
+          title="Ask Erpixa AI"
         >
           <span style={{ fontSize: '0.9rem' }}>✨</span>
           <span>Ask AI</span>
@@ -156,7 +156,7 @@ export default function TopNav() {
             border: '2px solid white', transition: 'var(--transition)',
           }}
           title="Profile"
-          onClick={logout}
+          onClick={signOut}
         >
           AJ
         </div>

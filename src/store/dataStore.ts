@@ -1,37 +1,83 @@
 import { create } from 'zustand';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   crmLeads,
   salesOrders as mockSalesOrders,
-  products as inventoryProducts,
-  invoices as accountingInvoices,
-  employees as hrEmployees,
-  projects as projectsData,
+  products as mockProducts,
+  invoices as mockInvoices,
+  employees as mockEmployees,
+  projects as mockProjects,
   projectTasks as mockProjectTasks,
   manufacturingOrders as mockMfgOrders,
-  tickets as helpdeskTickets
+  tickets as mockTickets,
 } from '../data/mockData';
+import type {
+  Lead, SalesOrder, Product, Invoice, Employee, Project,
+  ProjectTask, ManufacturingOrder, Ticket,
+} from '../types';
 
-export interface DataState {
-  leads: any[];
-  salesOrders: any[];
-  products: any[];
-  invoices: any[];
-  employees: any[];
-  projects: any[];
-  projectTasks: any[];
-  manufacturingOrders: any[];
-  tickets: any[];
-  loading: boolean;
-  fetchData: () => Promise<void>;
-  // Generic CRUD actions we can wire up later
-  addRecord: (table: string, record: any) => Promise<any>;
-  updateRecord: (table: string, id: string, record: any) => Promise<any>;
-  deleteRecord: (table: string, id: string) => Promise<any>;
+export type TableName =
+  | 'leads' | 'sales_orders' | 'products' | 'invoices'
+  | 'employees' | 'projects' | 'tickets' | 'manufacturing_orders';
+
+/** Maps a Supabase table to its slice of local state. */
+const TABLE_TO_KEY: Record<TableName, keyof DataSlices> = {
+  leads: 'leads',
+  sales_orders: 'salesOrders',
+  products: 'products',
+  invoices: 'invoices',
+  employees: 'employees',
+  projects: 'projects',
+  tickets: 'tickets',
+  manufacturing_orders: 'manufacturingOrders',
+};
+
+interface DataSlices {
+  leads: Lead[];
+  salesOrders: SalesOrder[];
+  products: Product[];
+  invoices: Invoice[];
+  employees: Employee[];
+  projects: Project[];
+  projectTasks: ProjectTask[];
+  manufacturingOrders: ManufacturingOrder[];
+  tickets: Ticket[];
 }
 
-const isSupabaseConfigured = () =>
-  !!import.meta.env.VITE_SUPABASE_URL && !import.meta.env.VITE_SUPABASE_URL.includes('placeholder') && !import.meta.env.VITE_SUPABASE_URL.includes('YOUR_');
+export interface DataState extends DataSlices {
+  loading: boolean;
+  error: string | null;
+  fetchData: () => Promise<void>;
+  addRecord: (table: TableName, record: Record<string, unknown>) => Promise<void>;
+  updateRecord: (table: TableName, id: string, record: Record<string, unknown>) => Promise<void>;
+  deleteRecord: (table: TableName, id: string) => Promise<void>;
+}
+
+type Row = Record<string, unknown>;
+
+// Postgres columns are snake_case; the UI model is camelCase.
+const normalizeProject = (row: Row): Project => ({
+  ...(row as unknown as Project),
+  dueDate: (row.due_date ?? row.dueDate ?? '') as string,
+  team: (row.team ?? []) as string[],
+});
+
+const normalizeEmployee = (row: Row): Employee => ({
+  ...(row as unknown as Employee),
+  joinDate: (row.join_date ?? row.joinDate ?? '') as string,
+});
+
+const MOCK_DATA: DataSlices = {
+  leads: crmLeads,
+  salesOrders: mockSalesOrders,
+  products: mockProducts,
+  invoices: mockInvoices,
+  employees: mockEmployees,
+  projects: mockProjects,
+  projectTasks: mockProjectTasks,
+  manufacturingOrders: mockMfgOrders,
+  tickets: mockTickets,
+};
 
 export const useDataStore = create<DataState>((set, get) => ({
   leads: [],
@@ -44,96 +90,93 @@ export const useDataStore = create<DataState>((set, get) => ({
   manufacturingOrders: [],
   tickets: [],
   loading: true,
+  error: null,
 
   fetchData: async () => {
-    // Timeout fallback — app works even if backend is unreachable
+    // Safety valve: never leave the app stuck on the loading screen.
     const timeout = new Promise<void>((resolve) =>
-      setTimeout(() => { set({ loading: false }); resolve(); }, 3000)
+      setTimeout(() => { set({ loading: false }); resolve(); }, 5000)
     );
 
     const doFetch = async () => {
+      if (!isSupabaseConfigured) {
+        set({ ...MOCK_DATA, loading: false, error: null });
+        return;
+      }
       try {
-        if (!isSupabaseConfigured()) {
-          // Fallback to local mock data immediately in Demo Mode
-          throw new Error('Demo mode');
-        }
+        const [leadsRes, ordersRes, productsRes, invoicesRes, employeesRes, projectsRes, ticketsRes, mfgRes] =
+          await Promise.all([
+            supabase.from('leads').select('*'),
+            supabase.from('sales_orders').select('*'),
+            supabase.from('products').select('*'),
+            supabase.from('invoices').select('*'),
+            supabase.from('employees').select('*'),
+            supabase.from('projects').select('*'),
+            supabase.from('tickets').select('*'),
+            supabase.from('manufacturing_orders').select('*'),
+          ]);
 
-        const [
-          { data: leadsRes, error: e1 },
-          { data: salesOrdersRes, error: e2 },
-          { data: productsRes, error: e3 },
-          { data: invoicesRes, error: e4 },
-          { data: employeesRes, error: e5 },
-          { data: projectsRes, error: e6 },
-          { data: ticketsRes, error: e7 },
-          { data: mfgRes, error: e8 }
-        ] = await Promise.all([
-          supabase.from('leads').select('*'),
-          supabase.from('sales_orders').select('*'),
-          supabase.from('products').select('*'),
-          supabase.from('invoices').select('*'),
-          supabase.from('employees').select('*'),
-          supabase.from('projects').select('*'),
-          supabase.from('tickets').select('*'),
-          supabase.from('manufacturing_orders').select('*')
-        ]);
-
-        // If Supabase queries fail (e.g. table doesn't exist yet), throw to trigger fallback
-        if (e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8) {
-          throw new Error('Supabase schema not fully setup yet');
-        }
+        const results = [leadsRes, ordersRes, productsRes, invoicesRes, employeesRes, projectsRes, ticketsRes, mfgRes];
+        const firstError = results.find((r) => r.error)?.error;
+        if (firstError) throw new Error(firstError.message);
 
         set({
-          leads: Array.isArray(leadsRes) ? leadsRes : [],
-          salesOrders: Array.isArray(salesOrdersRes) ? salesOrdersRes : [],
-          products: Array.isArray(productsRes) ? productsRes : [],
-          invoices: Array.isArray(invoicesRes) ? invoicesRes : [],
-          employees: Array.isArray(employeesRes) ? employeesRes : [],
-          projects: Array.isArray(projectsRes) ? projectsRes : [],
-          projectTasks: mockProjectTasks, // Supabase doesn't have projectTasks yet
-          manufacturingOrders: Array.isArray(mfgRes) ? mfgRes : [],
-          tickets: Array.isArray(ticketsRes) ? ticketsRes : [],
-          loading: false
+          leads: (leadsRes.data ?? []) as Lead[],
+          salesOrders: (ordersRes.data ?? []) as SalesOrder[],
+          products: (productsRes.data ?? []) as Product[],
+          invoices: (invoicesRes.data ?? []) as Invoice[],
+          employees: ((employeesRes.data ?? []) as Row[]).map(normalizeEmployee),
+          projects: ((projectsRes.data ?? []) as Row[]).map(normalizeProject),
+          projectTasks: mockProjectTasks, // project tasks are not persisted yet
+          manufacturingOrders: (mfgRes.data ?? []) as ManufacturingOrder[],
+          tickets: (ticketsRes.data ?? []) as Ticket[],
+          loading: false,
+          error: null,
         });
-      } catch (error) {
-        console.warn('Backend unavailable, running with local mock data:', error);
-        set({
-          leads: crmLeads,
-          salesOrders: mockSalesOrders,
-          products: inventoryProducts,
-          invoices: accountingInvoices,
-          employees: hrEmployees,
-          projects: projectsData,
-          projectTasks: mockProjectTasks,
-          manufacturingOrders: mockMfgOrders,
-          tickets: helpdeskTickets,
-          loading: false
-        });
+      } catch (err) {
+        // Backend unreachable or schema missing — degrade to the local demo dataset.
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        set({ ...MOCK_DATA, loading: false, error: message });
       }
     };
     await Promise.race([doFetch(), timeout]);
   },
 
   addRecord: async (table, record) => {
-    if (!isSupabaseConfigured()) return { id: Date.now().toString(), ...record }; // Mock return
-    const { data, error } = await supabase.from(table).insert(record).select().single();
-    if (error) throw error;
-    get().fetchData(); // Refresh all
-    return data;
+    if (!isSupabaseConfigured) {
+      const key = TABLE_TO_KEY[table];
+      const withId = { id: `local-${Date.now()}`, ...record };
+      set((s) => ({ [key]: [withId, ...(s[key] as unknown as Row[])] } as Partial<DataState>));
+      return;
+    }
+    const { error } = await supabase.from(table).insert(record);
+    if (error) throw new Error(error.message);
+    await get().fetchData();
   },
 
   updateRecord: async (table, id, record) => {
-    if (!isSupabaseConfigured()) return { id, ...record };
-    const { data, error } = await supabase.from(table).update(record).eq('id', id).select().single();
-    if (error) throw error;
-    get().fetchData();
-    return data;
+    const key = TABLE_TO_KEY[table];
+    if (!isSupabaseConfigured) {
+      set((s) => ({
+        [key]: (s[key] as unknown as Row[]).map((r) => (r.id === id ? { ...r, ...record } : r)),
+      } as Partial<DataState>));
+      return;
+    }
+    const { error } = await supabase.from(table).update(record).eq('id', id);
+    if (error) throw new Error(error.message);
+    await get().fetchData();
   },
 
   deleteRecord: async (table, id) => {
-    if (!isSupabaseConfigured()) return;
+    const key = TABLE_TO_KEY[table];
+    if (!isSupabaseConfigured) {
+      set((s) => ({
+        [key]: (s[key] as unknown as Row[]).filter((r) => r.id !== id),
+      } as Partial<DataState>));
+      return;
+    }
     const { error } = await supabase.from(table).delete().eq('id', id);
-    if (error) throw error;
-    get().fetchData();
-  }
+    if (error) throw new Error(error.message);
+    await get().fetchData();
+  },
 }));

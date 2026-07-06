@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuthStore, useUIStore } from '../store';
 
 export default function LoginPage() {
@@ -13,6 +13,20 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   const isConfigured = !!(import.meta.env.VITE_SUPABASE_URL && !import.meta.env.VITE_SUPABASE_URL.includes('placeholder'));
+
+  // Detect OAuth error params redirected back to the login page
+  // e.g. /?error=server_error&error_description=Unable+to+exchange+external+code
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlError = params.get('error');
+    const urlErrorDesc = params.get('error_description');
+    if (urlError) {
+      const msg = urlErrorDesc ?? urlError;
+      setError(`Authentication error: ${msg}`);
+      // Clean the URL so a page refresh doesn't re-show the error
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,7 +76,7 @@ export default function LoginPage() {
             fontSize: '1.75rem',
           }}>✨</div>
           <h1 style={{ fontFamily: 'Outfit', fontWeight: 900, fontSize: '1.75rem', color: '#fff', marginBottom: 6, letterSpacing: '-0.02em' }}>
-            Buis <span style={{ background: 'linear-gradient(135deg, #A78BFA, #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>AI</span>
+            Erpixa <span style={{ background: 'linear-gradient(135deg, #A78BFA, #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>ERP</span>
           </h1>
           <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem', fontWeight: 500 }}>
             Enterprise Management Platform
@@ -192,7 +206,7 @@ export default function LoginPage() {
                   </svg>
                   Signing in…
                 </>
-              ) : '→ Sign in to Buis AI'}
+              ) : '→ Sign in to Erpixa'}
             </button>
           </div>
         </form>
