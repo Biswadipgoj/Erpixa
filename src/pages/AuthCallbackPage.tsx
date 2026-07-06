@@ -5,14 +5,17 @@ import { supabase } from '../lib/supabase';
 /**
  * AuthCallbackPage — handles the OAuth redirect from Supabase/Google.
  *
- * Flow:
+ * Flow (Supabase PKCE with detectSessionInUrl: true):
  *  1. User clicks "Continue with Google" → redirected to Google.
- *  2. Google authenticates user → redirects to <origin>/auth/callback?code=xxx
- *  3. This page reads `code` from the URL and calls exchangeCodeForSession().
- *  4. Supabase creates the session → onAuthStateChange fires in the auth store.
- *  5. User is navigated to the dashboard.
+ *  2. Google authenticates → redirects to <origin>/auth/callback?code=xxx
+ *  3. Supabase JS client auto-exchanges the PKCE code via detectSessionInUrl.
+ *  4. onAuthStateChange fires with SIGNED_IN event.
+ *  5. This page listens for that event and navigates to the dashboard.
  *
- * This must be a publicly accessible route (no auth guard).
+ * ⚠️  Do NOT call exchangeCodeForSession() here manually.
+ *     With detectSessionInUrl: true, the Supabase client already does it
+ *     internally. Calling it again would attempt to spend the one-time code
+ *     a second time → "Unable to exchange external code" error.
  */
 
 interface CallbackState {
@@ -27,78 +30,76 @@ const REDIRECT_DELAY_MS = 3500;
 export default function AuthCallbackPage() {
   const navigate = useNavigate();
   const [state, setState] = useState<CallbackState>({ status: 'loading', message: 'Completing sign-in…' });
-  const exchanged = useRef(false);
+  const listenerSet = useRef(false);
 
   useEffect(() => {
-    // Prevent double-invocation in React StrictMode
-    if (exchanged.current) return;
-    exchanged.current = true;
+    if (listenerSet.current) return;
+    listenerSet.current = true;
 
-    const handleCallback = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const code          = params.get('code');
-      const errorParam    = params.get('error');
-      const errorDesc     = params.get('error_description');
+    const params = new URLSearchParams(window.location.search);
+    const errorParam = params.get('error');
+    const errorDesc  = params.get('error_description');
 
-      console.log('[AuthCallback] URL params:', { code: !!code, errorParam, errorDesc });
+    // ── Explicit OAuth error returned in the URL ─────────────────────────────
+    if (errorParam) {
+      const raw = errorDesc ?? errorParam;
+      const { message, hint } = friendlyError(raw, errorParam);
+      console.error('[AuthCallback] OAuth error in URL:', raw);
+      setState({ status: 'error', message, detail: raw, hint });
+      setTimeout(() => {
+        navigate(`/login?error=${encodeURIComponent(raw)}`, { replace: true });
+      }, REDIRECT_DELAY_MS);
+      return;
+    }
 
-      // ── Explicit OAuth error returned by Supabase / Google ──────────
-      if (errorParam) {
-        const raw = errorDesc ?? errorParam;
-        const { message, hint } = friendlyError(raw, errorParam);
-        console.error('[AuthCallback] OAuth error from provider:', raw);
-        setState({ status: 'error', message, detail: raw, hint });
-        setTimeout(() => {
-          navigate(`/login?error=${encodeURIComponent(raw)}`, { replace: true });
-        }, REDIRECT_DELAY_MS);
-        return;
-      }
+    // ── Listen for the SIGNED_IN event from Supabase's auto-exchange ─────────
+    // Supabase v2 with detectSessionInUrl:true + flowType:'pkce' exchanges the
+    // ?code= param automatically. We simply wait for the resulting SIGNED_IN event.
+    setState({ status: 'loading', message: 'Verifying with Google…' });
 
-      // ── PKCE code exchange ───────────────────────────────────────────
-      if (code) {
-        console.log('[AuthCallback] Exchanging PKCE code for session…');
-        setState({ status: 'loading', message: 'Verifying with Google…' });
-        const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('[AuthCallback] onAuthStateChange:', event, session?.user?.email ?? null);
 
-        if (exchangeError) {
-          console.error('[AuthCallback] exchangeCodeForSession failed:', exchangeError.message);
-          const { message, hint } = friendlyError(exchangeError.message, 'exchange_error');
-          setState({
-            status: 'error',
-            message,
-            detail: exchangeError.message,
-            hint,
-          });
-          setTimeout(() => {
-            navigate(`/login?error=${encodeURIComponent(exchangeError.message)}`, { replace: true });
-          }, REDIRECT_DELAY_MS);
-          return;
-        }
-
-        console.log('[AuthCallback] Session created for:', data.session?.user?.email);
-        setState({ status: 'success', message: `Welcome, ${data.session?.user?.email ?? 'User'}!` });
-        // Session is now stored; the auth store will pick it up via onAuthStateChange.
+      if (event === 'SIGNED_IN' && session) {
+        setState({ status: 'success', message: `Welcome, ${session.user.email ?? 'User'}!` });
+        subscription.unsubscribe();
         navigate('/', { replace: true });
         return;
       }
 
-      // ── No code and no error — check for existing session ──────────
-      const { data: { session } } = await supabase.auth.getSession();
+      if (event === 'TOKEN_REFRESHED' && session) {
+        // Already had a valid session — just go to dashboard
+        subscription.unsubscribe();
+        navigate('/', { replace: true });
+        return;
+      }
+    });
+
+    // ── Fallback: check for an already-existing session ──────────────────────
+    // In case onAuthStateChange fired before we subscribed (rare but possible)
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
-        console.log('[AuthCallback] Session already exists, redirecting to dashboard.');
+        console.log('[AuthCallback] Session already exists, navigating to dashboard.');
+        subscription.unsubscribe();
         navigate('/', { replace: true });
-      } else {
-        console.warn('[AuthCallback] No code and no session found. Redirecting to login.');
-        const raw = 'Authentication failed — no code received.';
-        const { message, hint } = friendlyError(raw, 'no_code');
-        setState({ status: 'error', message, hint });
-        setTimeout(() => {
-          navigate('/login?error=Authentication+failed.+Please+try+again.', { replace: true });
-        }, REDIRECT_DELAY_MS);
       }
-    };
+    });
 
-    handleCallback();
+    // ── Timeout: if nothing fires in 10s, show an error ─────────────────────
+    const timeout = setTimeout(() => {
+      subscription.unsubscribe();
+      const raw = 'Authentication timed out — no session was established.';
+      const { message, hint } = friendlyError('exchange', 'exchange_error');
+      setState({ status: 'error', message, detail: raw, hint });
+      setTimeout(() => {
+        navigate('/login?error=Authentication+timed+out.+Please+try+again.', { replace: true });
+      }, REDIRECT_DELAY_MS);
+    }, 10_000);
+
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, [navigate]);
 
   return (
@@ -135,6 +136,7 @@ export default function AuthCallbackPage() {
               borderRadius: 12,
               fontSize: '0.82rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.7,
               fontFamily: 'Inter, sans-serif',
+              whiteSpace: 'pre-line',
             }}>
               <div style={{ fontWeight: 700, color: '#A78BFA', marginBottom: 6 }}>💡 How to fix this</div>
               <div>{state.hint}</div>
