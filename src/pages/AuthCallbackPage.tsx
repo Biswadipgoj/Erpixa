@@ -228,7 +228,7 @@ function friendlyError(raw: string, code: string): { message: string; hint?: str
       message: 'OAuth redirect failed — the callback URL is not whitelisted.',
       hint:
         `Add "${window.location.origin}/auth/callback" to your Supabase ` +
-        'project's allowed Redirect URLs (Auth → URL Configuration).`,
+        'project\'s allowed Redirect URLs (Auth → URL Configuration).',
     };
   }
 
