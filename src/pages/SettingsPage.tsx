@@ -1,7 +1,7 @@
 import { useAuthStore } from '../store';
 
 export default function SettingsPage() {
-  const { user } = useAuthStore();
+  const { user, organization } = useAuthStore();
 
   return (
     <div className="fade-in">
@@ -21,14 +21,14 @@ export default function SettingsPage() {
             <div className="grid-2 mb-4">
               <div className="input-wrap">
                 <span className="input-label">Company Name</span>
-                <input className="tinput" defaultValue={user?.company} />
+                <input className="tinput" defaultValue={organization?.name || ''} />
               </div>
               <div className="input-wrap">
                 <span className="input-label">Timezone</span>
-                <select className="tinput select">
-                  <option>UTC (Coordinated Universal Time)</option>
-                  <option>EST (Eastern Standard Time)</option>
-                  <option>PST (Pacific Standard Time)</option>
+                <select className="tinput select" defaultValue={organization?.timezone || 'UTC'}>
+                  <option value="UTC">UTC (Coordinated Universal Time)</option>
+                  <option value="EST">EST (Eastern Standard Time)</option>
+                  <option value="PST">PST (Pacific Standard Time)</option>
                 </select>
               </div>
             </div>
@@ -63,8 +63,8 @@ export default function SettingsPage() {
             <div className="avatar avatar-xl mb-3" style={{ background: 'var(--grad-ai)', color: '#fff', width: 80, height: 80, fontSize: '2rem' }}>
               {user?.full_name?.charAt(0) || user?.email?.charAt(0)?.toUpperCase()}
             </div>
-            <h3 className="font-bold text-lg">{user?.full_name || 'Admin'}</h3>
-            <div className="text-muted mb-4">{user?.role}</div>
+            <h3 className="font-bold text-lg">{user?.full_name || 'User'}</h3>
+            <div className="text-muted mb-4">{user?.email}</div>
             
             <button className="btn btn-secondary w-full mb-2">Edit Profile</button>
             <button className="btn btn-ghost w-full">Change Password</button>

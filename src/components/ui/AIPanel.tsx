@@ -1,9 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useUIStore, useCurrencyStore } from '../../store';
-import {
-  crmLeads as mockLeads, crmStages, salesOrders as mockOrders, products as mockProducts, invoices as mockInvoices,
-  employees as mockEmployees, projects as mockProjects, tickets as mockTickets, manufacturingOrders as mockMfgOrders, revenueData,
-} from '../../data/mockData';
 import { useDataStore } from '../../store/dataStore';
 
 // ── Types ──────────────────────────────────────────────────────
@@ -36,6 +32,14 @@ const QUICK_PROMPTS: QuickPrompt[] = [
   { icon: '🤖', label: 'AI recommendations',   query: 'Give me your top 3 business recommendations',        category: 'Insights'   },
 ];
 
+const crmStages = [
+  { id: 's1', name: 'New Lead', color: '#6366F1' },
+  { id: 's2', name: 'Qualified', color: '#06B6D4' },
+  { id: 's3', name: 'Proposal', color: '#F59E0B' },
+  { id: 's4', name: 'Won', color: '#10B981' },
+  { id: 's5', name: 'Lost', color: '#EF4444' },
+];
+
 // ── AI Brain: keyword-based contextual responses ────────────────
 function generateAIResponse(
   query: string,
@@ -43,23 +47,21 @@ function generateAIResponse(
   liveData: { leads: any[]; salesOrders: any[]; products: any[]; invoices: any[]; employees: any[]; projects: any[]; tickets: any[]; manufacturingOrders: any[] }
 ): { text: string; data?: React.ReactNode } {
   const q = query.toLowerCase();
-  // Use live backend data if populated, otherwise fall back to mock data
-  const crmLeads = liveData.leads?.length ? liveData.leads : mockLeads;
-  const salesOrders = liveData.salesOrders?.length ? liveData.salesOrders : mockOrders;
-  const products = liveData.products?.length ? liveData.products : mockProducts;
-  const invoices = liveData.invoices?.length ? liveData.invoices : mockInvoices;
-  const employees = liveData.employees?.length ? liveData.employees : mockEmployees;
-  const projects = liveData.projects?.length ? liveData.projects : mockProjects;
-  const tickets = liveData.tickets?.length ? liveData.tickets : mockTickets;
-  const manufacturingOrders = liveData.manufacturingOrders?.length ? liveData.manufacturingOrders : mockMfgOrders;
+  const crmLeads = liveData.leads || [];
+  const salesOrders = liveData.salesOrders || [];
+  const products = liveData.products || [];
+  const invoices = liveData.invoices || [];
+  const employees = liveData.employees || [];
+  const projects = liveData.projects || [];
+  const tickets = liveData.tickets || [];
+  const manufacturingOrders = liveData.manufacturingOrders || [];
 
   // ── Revenue / Finance
   if (q.includes('revenue') || q.includes('total') || (q.includes('finance') && !q.includes('invoice'))) {
-    const total = revenueData.reduce((a, b) => a + b.revenue, 0);
-    const avgTarget = revenueData.reduce((a, b) => a + b.target, 0);
-    const thisMonth = revenueData[revenueData.length - 1];
-    const prevMonth = revenueData[revenueData.length - 2];
-    const growth = (((thisMonth.revenue - prevMonth.revenue) / prevMonth.revenue) * 100).toFixed(1);
+    const total = invoices.reduce((a, b) => a + b.amount, 0);
+    const avgTarget = total > 0 ? total * 1.2 : 0;
+    const growth = 0;
+
     return {
       text: `Here's your revenue overview for this year:`,
       data: (
@@ -70,15 +72,6 @@ function generateAIResponse(
             <div className="ai-stat"><span className="ai-stat-label">MoM Growth</span><span className="ai-stat-value" style={{ color: Number(growth) >= 0 ? 'var(--success)' : 'var(--danger)' }}>{growth}%</span></div>
           </div>
           <div className="ai-divider" />
-          {revenueData.slice(-4).map(m => (
-            <div key={m.month} className="ai-bar-row">
-              <span className="ai-bar-label">{m.month}</span>
-              <div className="ai-bar-track">
-                <div className="ai-bar-fill" style={{ width: `${(m.revenue / 140000) * 100}%` }} />
-              </div>
-              <span className="ai-bar-value">{format(m.revenue, true)}</span>
-            </div>
-          ))}
           <div className="ai-insight">💡 Revenue is trending <strong>{Number(growth) >= 0 ? 'above' : 'below'}</strong> last month by {Math.abs(Number(growth))}%. {Number(growth) >= 0 ? 'Keep pushing the sales pipeline.' : 'Consider accelerating deal closures.'}</div>
         </div>
       ),

@@ -27,6 +27,22 @@ import MarketingPage from './pages/MarketingPage';
 import SettingsPage from './pages/SettingsPage';
 import AdminPage from './pages/AdminPage';
 
+// Domain-Specific Pages
+import POSPage from './pages/POSPage';
+import KitchenPage from './pages/KitchenPage';
+import TablesPage from './pages/TablesPage';
+import MenuPage from './pages/MenuPage';
+import DeliveryPage from './pages/DeliveryPage';
+import ReservationsPage from './pages/ReservationsPage';
+import BOMPage from './pages/BOMPage';
+import MRPPage from './pages/MRPPage';
+import FactoryPage from './pages/FactoryPage';
+import MachinesPage from './pages/MachinesPage';
+import PurchasePage from './pages/PurchasePage';
+import WarehousePage from './pages/WarehousePage';
+import ClientsPage from './pages/ClientsPage';
+import DocumentsPage from './pages/DocumentsPage';
+
 const PAGE_BY_MODULE: Record<string, React.ReactElement> = {
   crm: <CRMPage />,
   sales: <SalesPage />,
@@ -37,6 +53,23 @@ const PAGE_BY_MODULE: Record<string, React.ReactElement> = {
   manufacturing: <ManufacturingPage />,
   helpdesk: <HelpdeskPage />,
   marketing: <MarketingPage />,
+  
+  pos: <POSPage />,
+  kitchen: <KitchenPage />,
+  tables: <TablesPage />,
+  menu: <MenuPage />,
+  delivery: <DeliveryPage />,
+  reservations: <ReservationsPage />,
+  
+  bom: <BOMPage />,
+  mrp: <MRPPage />,
+  factory: <FactoryPage />,
+  machines: <MachinesPage />,
+  purchase: <PurchasePage />,
+  warehouse: <WarehousePage />,
+  
+  clients: <ClientsPage />,
+  documents: <DocumentsPage />,
 };
 
 // ── Full-screen states ───────────────────────────────────────────────────────

@@ -418,7 +418,7 @@ interface NotificationRow {
   created_at: string;
 }
 
-export const useNotificationStore = create<NotificationState>((set, get) => ({
+export const useNotificationStore = create<NotificationState>((set) => ({
   items: [],
   loading: false,
 

@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../store';
 import { supabase, type UserProfile } from '../lib/supabase';
 
+interface AdminUser extends UserProfile {
+  role: 'admin' | 'manager' | 'user';
+  company?: string;
+}
+
 const ROLE_COLORS: Record<string, string> = {
   admin: 'linear-gradient(135deg,#7C3AED,#4F46E5)',
   manager: 'linear-gradient(135deg,#059669,#06B6D4)',
@@ -12,7 +17,7 @@ const ROLE_ICONS: Record<string, string> = { admin: '👑', manager: '🎯', use
 
 export default function AdminPage() {
   const currentUser = useAuthStore((s) => s.user);
-  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'users' | 'invite' | 'settings'>('users');
   const [inviteEmail, setInviteEmail] = useState('');
@@ -41,7 +46,7 @@ export default function AdminPage() {
       return;
     }
     const { data } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
-    if (data) setUsers(data as UserProfile[]);
+    if (data) setUsers(data as AdminUser[]);
     setLoading(false);
   }
 
@@ -90,8 +95,10 @@ export default function AdminPage() {
     setInviting(false);
   }
 
+  const currentRole = useAuthStore((s) => s.orgRole);
+  
   // Only admins can access
-  if (currentUser?.role !== 'admin') {
+  if (currentRole !== 'admin' && currentRole !== 'owner') {
     return (
       <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 16 }}>
         <div style={{ fontSize: '4rem' }}>🚫</div>
