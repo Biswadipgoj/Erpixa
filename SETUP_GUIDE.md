@@ -1,119 +1,86 @@
-# 🚀 Buis AI — Complete Setup Guide
-## Supabase + Google OAuth + Vercel Deployment
+# Erpixa — Setup Guide
 
-Follow these steps **in order**. Each step is self-contained.
-
----
-
-## STEP 1 — Create Free Supabase Project
-
-1. Go to **https://supabase.com** → Click **Start your project**
-2. Sign in with GitHub (it's free)
-3. Click **New Project**
-4. Fill in:
-   - **Name**: `buis-ai`
-   - **Database Password**: Choose a strong password (save it!)
-   - **Region**: Choose closest to you (e.g., Singapore for India)
-5. Click **Create new project** → wait ~2 minutes
+Erpixa runs on [Supabase](https://supabase.com) (Postgres + Auth). This guide takes
+you from an empty project to a deployed app. Follow the steps in order.
 
 ---
 
-## STEP 2 — Set Up Database Schema
+## 1. Create a Supabase project
 
-1. In your Supabase dashboard, click **SQL Editor** in the left sidebar
-2. Click **New query**
-3. Open the file: `d:\akd\buis-ai\supabase\schema.sql`
-4. Copy the **entire contents** and paste into the SQL Editor
-5. Click **Run** (▶️)
-6. You should see: `Success. No rows returned`
+1. Go to **https://supabase.com** and create a new project.
+2. Pick a strong database password and the region closest to your users.
+3. Wait for the project to finish provisioning (~2 minutes).
 
----
+## 2. Create the database schema
 
-## STEP 3 — Get Your API Keys
+1. In the Supabase dashboard open **SQL Editor → New query**.
+2. Paste the entire contents of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**.
+3. You should see `Success. No rows returned`. This creates every table, index,
+   row-level-security policy, and the `create_organization` function. No seed
+   data is inserted — new accounts start empty.
 
-1. In Supabase dashboard, click **Settings** (gear icon) → **API**
-2. You'll see two values:
-   - **Project URL** — looks like `https://xyzxyzxyz.supabase.co`
-   - **anon / public** key — a long string starting with `eyJ...`
-3. Open the file `d:\akd\buis-ai\.env` in your editor
-4. Replace the placeholders:
-```
-VITE_SUPABASE_URL=https://YOUR_ACTUAL_PROJECT_ID.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJ...YOUR_ACTUAL_KEY
-```
+## 3. Add your API keys
 
----
+1. In Supabase open **Project Settings → API**.
+2. Copy the **Project URL** and the **anon / public** key.
+3. Create a `.env` file in the project root (copy `.env.example`) and fill in:
 
-## STEP 4 — Enable Google OAuth
+   ```
+   VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
+   VITE_SUPABASE_ANON_KEY=eyJ...your-anon-key
+   ```
 
-### Part A: Google Cloud Console
-1. Go to **https://console.cloud.google.com**
-2. Create a new project: **Buis AI**
-3. Go to **APIs & Services** → **OAuth consent screen**
-   - User Type: **External** → Create
-   - App name: `Buis AI`
-   - Support email: your email
-   - Click Save and Continue through all steps
-4. Go to **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
-   - Application type: **Web application**
-   - Name: `Buis AI Web`
-   - Authorized redirect URIs: Add this URL:
-     ```
-     https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback
-     ```
-5. Click **Create** — copy both **Client ID** and **Client Secret**
+   > The anon key is safe to expose in the browser — row-level security enforces
+   > access. **Never** put the `service_role` key in a `VITE_` variable.
 
-### Part B: Add to Supabase
-1. In Supabase → **Authentication** → **Providers** → **Google** → Toggle **Enable**
-2. Paste your Client ID and Client Secret
-3. Click **Save**
+## 4. Run locally
 
----
-
-## STEP 5 — Create Your Admin Account
-
-1. Run the app locally: `npm run dev` in `d:\akd\buis-ai`
-2. Open **http://localhost:5174** and sign in with Google
-3. In Supabase → **Table Editor** → **profiles**
-4. Find your row and set `role` = `admin`
-5. Refresh → you'll see the **Admin Panel** in the sidebar
-
----
-
-## STEP 6 — Deploy to Vercel
-
-### Push to GitHub first:
 ```bash
-cd d:\akd\buis-ai
-git init && git add . && git commit -m "Initial Buis AI"
+npm install
+npm run dev
 ```
-Go to https://github.com/new, create `buis-ai` repo, and push.
 
-### Deploy on Vercel:
-1. Go to **https://vercel.com** → Add New Project → Select `buis-ai`
-2. Add Environment Variables BEFORE deploying:
-   - `VITE_SUPABASE_URL` = your Supabase project URL
-   - `VITE_SUPABASE_ANON_KEY` = your anon key
-3. Click **Deploy**
+Open the printed URL, create an account, and complete onboarding. Onboarding
+collects your business name, type, and industry, then provisions your workspace
+and enables the modules that fit your business.
 
-### Update OAuth redirect:
-Add your Vercel URL to Google OAuth Authorized redirect URIs:
-```
-https://YOUR-APP.vercel.app/auth/callback
-```
-And in Supabase → Authentication → URL Configuration:
-```
-Site URL: https://YOUR-APP.vercel.app
-Redirect URLs: https://YOUR-APP.vercel.app/auth/callback
-```
+## 5. Enable Google sign-in (optional)
+
+**Google Cloud Console**
+1. Create a project, then **APIs & Services → OAuth consent screen** (External).
+2. **Credentials → Create Credentials → OAuth 2.0 Client ID** (Web application).
+3. Add the authorized redirect URI:
+   `https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback`
+4. Copy the Client ID and Client Secret.
+
+**Supabase**
+1. **Authentication → Providers → Google → Enable**, paste the ID and secret.
+2. **Authentication → URL Configuration** — add your app origin + `/auth/callback`
+   to the Redirect URLs (e.g. `http://localhost:5173/auth/callback` for local dev).
+
+## 6. Roles & the admin panel
+
+The person who completes onboarding becomes the **owner** of that workspace and
+sees **Team & access** in the sidebar automatically — there is no manual database
+step. Owners and admins can change teammates' roles and suspend accounts there.
+Roles are enforced by row-level security, not just the UI.
+
+## 7. Deploy
+
+1. Push the repo to GitHub and import it on your host (e.g. Vercel).
+2. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` as environment variables
+   **before** the first deploy.
+3. After deploying, add your production origin + `/auth/callback` to Supabase's
+   Redirect URLs (and to Google's authorized URIs if you enabled Google sign-in).
+   `vercel.json` already rewrites all routes to `index.html` for the SPA.
 
 ---
 
-## Troubleshooting
+### Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| "Demo Mode" warning in app | Set correct values in `.env` file |
-| Google OAuth fails | Verify redirect URI matches exactly |
-| Admin panel shows "Access Denied" | Set your role to `admin` in Supabase Table Editor |
-| Vercel deploy fails | Check env vars are added in Vercel project settings |
+| Symptom | Fix |
+|---|---|
+| "Connect Erpixa to Supabase" screen | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are missing or still placeholders. |
+| Database-error banner mentioning a missing relation | Re-run `supabase/schema.sql` in the SQL Editor. |
+| Google sign-in fails | Confirm the redirect URLs match exactly in both Google and Supabase. |
+| "Access restricted" on the admin panel | Only owners/admins can open it; ask an owner to change your role. |

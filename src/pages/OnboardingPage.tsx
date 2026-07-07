@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAuthStore, useUIStore, CURRENCIES } from '../store';
 import { MODULES } from '../lib/modules';
+import Icon from '../components/ui/Icon';
 import {
   BUSINESS_TYPES, BUSINESS_SIZES, TAX_SCHEMES, FISCAL_MONTHS, COUNTRIES,
   businessTypeById, detectTimezone, listTimezones,
@@ -113,7 +114,7 @@ export default function OnboardingPage() {
       setSubmitting(false);
       return;
     }
-    addToast({ message: `${name.trim()} is ready — welcome to Erpixa! 🎉`, type: 'success' });
+    addToast({ message: `${name.trim()} is ready — welcome to Erpixa!`, type: 'success' });
   };
 
   const field = (
@@ -130,9 +131,6 @@ export default function OnboardingPage() {
 
   return (
     <div className="onboarding-page">
-      <div className="login-bg-blob" style={{ top: -120, left: -100 }} aria-hidden="true" />
-      <div className="login-bg-blob" style={{ bottom: -140, right: -120, animationDelay: '1.2s' }} aria-hidden="true" />
-
       <div className="onboarding-card">
         <div className="onboarding-header">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -182,7 +180,7 @@ export default function OnboardingPage() {
                       className={`type-item${businessType === t.id ? ' selected' : ''}`}
                       onClick={() => selectType(t.id)}
                     >
-                      <span className="type-icon" aria-hidden="true">{t.icon}</span>
+                      <span className="type-icon"><Icon name={t.icon} size={20} /></span>
                       {t.label}
                     </button>
                   ))}
@@ -309,7 +307,7 @@ export default function OnboardingPage() {
                         checked={enabled}
                         onChange={() => toggleModule(m.id)}
                       />
-                      <span aria-hidden="true">{m.icon}</span>
+                      <span className="module-icon"><Icon name={m.icon} size={16} /></span>
                       <span style={{ flex: 1 }}>{m.label}</span>
                     </label>
                   );
@@ -335,7 +333,7 @@ export default function OnboardingPage() {
             </button>
           ) : (
             <button type="button" className="btn btn-primary" onClick={finish} disabled={submitting}>
-              {submitting ? 'Creating workspace…' : 'Launch Erpixa 🚀'}
+              {submitting ? 'Creating workspace…' : 'Launch Erpixa'}
             </button>
           )}
         </div>

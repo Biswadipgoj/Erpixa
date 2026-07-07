@@ -11,7 +11,25 @@
 --   * No seed data: new organizations start empty.
 -- ============================================================
 
--- ── 0. Extensions ────────────────────────────────────────────────────────────
+-- ── 0. Cleanup (Drop existing tables to ensure a clean slate for v3) ─────────
+DROP TABLE IF EXISTS public.notifications CASCADE;
+DROP TABLE IF EXISTS public.campaigns CASCADE;
+DROP TABLE IF EXISTS public.manufacturing_orders CASCADE;
+DROP TABLE IF EXISTS public.tickets CASCADE;
+DROP TABLE IF EXISTS public.project_tasks CASCADE;
+DROP TABLE IF EXISTS public.projects CASCADE;
+DROP TABLE IF EXISTS public.employees CASCADE;
+DROP TABLE IF EXISTS public.invoices CASCADE;
+DROP TABLE IF EXISTS public.products CASCADE;
+DROP TABLE IF EXISTS public.sales_orders CASCADE;
+DROP TABLE IF EXISTS public.leads CASCADE;
+DROP TABLE IF EXISTS public.suppliers CASCADE;
+DROP TABLE IF EXISTS public.customers CASCADE;
+DROP TABLE IF EXISTS public.organization_members CASCADE;
+DROP TABLE IF EXISTS public.organizations CASCADE;
+DROP TABLE IF EXISTS public.profiles CASCADE;
+
+-- ── 0.5. Extensions ──────────────────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ── 1. Profiles (one per auth user, global — not org-scoped) ────────────────
@@ -104,6 +122,36 @@ SECURITY DEFINER SET search_path = public
 AS $$
   SELECT role FROM public.organization_members
   WHERE organization_id = org_id AND user_id = auth.uid();
+$$;
+
+-- True when the caller shares at least one organization with target_user.
+CREATE OR REPLACE FUNCTION public.shares_org(target_user UUID)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE
+SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.organization_members me
+    JOIN public.organization_members them ON me.organization_id = them.organization_id
+    WHERE me.user_id = auth.uid() AND them.user_id = target_user
+  );
+$$;
+
+-- True when the caller is an owner/admin of an organization target_user belongs to.
+CREATE OR REPLACE FUNCTION public.is_admin_over(target_user UUID)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE
+SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.organization_members me
+    JOIN public.organization_members them ON me.organization_id = them.organization_id
+    WHERE me.user_id = auth.uid()
+      AND me.role IN ('owner', 'admin')
+      AND them.user_id = target_user
+  );
 $$;
 
 -- Atomic org creation: inserts the organization and its owner membership in
@@ -203,7 +251,8 @@ CREATE TABLE IF NOT EXISTS public.leads (
   organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
   name            TEXT NOT NULL,
   partner         TEXT NOT NULL DEFAULT '',
-  stage           TEXT NOT NULL DEFAULT 's1',
+  stage           TEXT NOT NULL DEFAULT 'new'
+                    CHECK (stage IN ('new', 'qualified', 'proposal', 'negotiation', 'won', 'lost')),
   probability     INTEGER NOT NULL DEFAULT 10 CHECK (probability BETWEEN 0 AND 100),
   revenue         NUMERIC NOT NULL DEFAULT 0,
   owner_name      TEXT NOT NULL DEFAULT '',
@@ -430,11 +479,17 @@ BEGIN
   END LOOP;
 END $$;
 
--- Profiles: users see and edit only their own profile
+-- Profiles: users read/edit their own profile; teammates in the same org can
+-- read each other (for the members roster); owners/admins can update a
+-- teammate's row (e.g. suspend). No one can change a profile's id.
 CREATE POLICY "profiles_select_own" ON public.profiles
   FOR SELECT TO authenticated USING (auth.uid() = id);
+CREATE POLICY "profiles_select_org" ON public.profiles
+  FOR SELECT TO authenticated USING (public.shares_org(id));
 CREATE POLICY "profiles_update_own" ON public.profiles
   FOR UPDATE TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+CREATE POLICY "profiles_update_admin" ON public.profiles
+  FOR UPDATE TO authenticated USING (public.is_admin_over(id)) WITH CHECK (public.is_admin_over(id));
 
 -- Organizations: members read; owner/admin update; creation via create_organization()
 CREATE POLICY "orgs_select_member" ON public.organizations

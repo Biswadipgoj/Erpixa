@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useUIStore, useCurrencyStore } from '../../store';
-import { useDataStore } from '../../store/dataStore';
+import { useDataStore, type DataState } from '../../store/dataStore';
+import { stageById } from '../../lib/crmStages';
+import Icon from './Icon';
 
-// ── Types ──────────────────────────────────────────────────────
 interface Message {
   id: string;
-  role: 'user' | 'ai';
+  role: 'user' | 'assistant';
   text: string;
   data?: React.ReactNode;
   timestamp: Date;
@@ -18,107 +19,99 @@ interface QuickPrompt {
   category: string;
 }
 
-// ── Quick prompts organised by business domain ──────────────────
 const QUICK_PROMPTS: QuickPrompt[] = [
-  { icon: '💰', label: 'Revenue summary',      query: 'What is our total revenue this year?',               category: 'Finance'    },
-  { icon: '🎯', label: 'Top leads',             query: 'Show me the highest value leads in the pipeline',    category: 'Sales'      },
-  { icon: '📦', label: 'Low stock alert',       query: 'Which products are running low on stock?',           category: 'Inventory'  },
-  { icon: '🧾', label: 'Overdue invoices',      query: 'List all overdue invoices',                          category: 'Finance'    },
-  { icon: '👥', label: 'Team overview',          query: 'Give me a summary of my team and departments',       category: 'HR'         },
-  { icon: '🎫', label: 'Open tickets',          query: 'What support tickets need urgent attention?',        category: 'Support'    },
-  { icon: '📋', label: 'Project health',        query: 'How are our active projects performing?',            category: 'Projects'   },
-  { icon: '🏭', label: 'Production status',     query: 'What is the current manufacturing order status?',    category: 'Operations' },
-  { icon: '📈', label: 'Sales performance',     query: 'Show me sales performance across all orders',        category: 'Sales'      },
-  { icon: '🤖', label: 'AI recommendations',   query: 'Give me your top 3 business recommendations',        category: 'Insights'   },
+  { icon: 'accounting',    label: 'Revenue summary',   query: 'What is our billed revenue?',                     category: 'Finance'    },
+  { icon: 'crm',           label: 'Top leads',          query: 'Show me the highest value leads',                category: 'Sales'      },
+  { icon: 'inventory',     label: 'Low stock',          query: 'Which products are running low on stock?',       category: 'Inventory'  },
+  { icon: 'accounting',    label: 'Overdue invoices',   query: 'List all overdue invoices',                      category: 'Finance'    },
+  { icon: 'hr',            label: 'Team overview',      query: 'Give me a summary of my team',                   category: 'HR'         },
+  { icon: 'helpdesk',      label: 'Open tickets',       query: 'Which support tickets need attention?',          category: 'Support'    },
+  { icon: 'projects',      label: 'Project health',     query: 'How are our active projects performing?',        category: 'Projects'   },
+  { icon: 'manufacturing', label: 'Production status',  query: 'What is the manufacturing order status?',        category: 'Operations' },
+  { icon: 'sales',         label: 'Sales performance',  query: 'Show me sales performance across orders',        category: 'Sales'      },
+  { icon: 'spark',         label: 'Recommendations',    query: 'Give me your top business recommendations',      category: 'Insights'   },
 ];
 
-const crmStages = [
-  { id: 's1', name: 'New Lead', color: '#6366F1' },
-  { id: 's2', name: 'Qualified', color: '#06B6D4' },
-  { id: 's3', name: 'Proposal', color: '#F59E0B' },
-  { id: 's4', name: 'Won', color: '#10B981' },
-  { id: 's5', name: 'Lost', color: '#EF4444' },
-];
+type Fmt = (v: number, compact?: boolean) => string;
 
-// ── AI Brain: keyword-based contextual responses ────────────────
-function generateAIResponse(
-  query: string,
-  format: (v: number, c?: boolean) => string,
-  liveData: { leads: any[]; salesOrders: any[]; products: any[]; invoices: any[]; employees: any[]; projects: any[]; tickets: any[]; manufacturingOrders: any[] }
-): { text: string; data?: React.ReactNode } {
+/**
+ * Deterministic query engine over the org's live data. This is not a language
+ * model — it maps a keyword query to a concrete, data-backed answer.
+ */
+function answerQuery(query: string, format: Fmt, data: DataState): { text: string; data?: React.ReactNode } {
   const q = query.toLowerCase();
-  const crmLeads = liveData.leads || [];
-  const salesOrders = liveData.salesOrders || [];
-  const products = liveData.products || [];
-  const invoices = liveData.invoices || [];
-  const employees = liveData.employees || [];
-  const projects = liveData.projects || [];
-  const tickets = liveData.tickets || [];
-  const manufacturingOrders = liveData.manufacturingOrders || [];
+  const { leads, salesOrders, products, invoices, employees, projects, tickets, manufacturingOrders } = data;
 
-  // ── Revenue / Finance
   if (q.includes('revenue') || q.includes('total') || (q.includes('finance') && !q.includes('invoice'))) {
-    const total = invoices.reduce((a, b) => a + b.amount, 0);
-    const avgTarget = total > 0 ? total * 1.2 : 0;
-    const growth = 0;
-
+    const billed = invoices.reduce((a, b) => a + b.amount, 0);
+    const paid = invoices.filter((i) => i.payment === 'Paid').reduce((a, i) => a + i.amount, 0);
+    const outstanding = billed - paid;
     return {
-      text: `Here's your revenue overview for this year:`,
+      text: 'Here’s your invoiced revenue so far:',
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
-            <div className="ai-stat"><span className="ai-stat-label">YTD Revenue</span><span className="ai-stat-value">{format(total, true)}</span></div>
-            <div className="ai-stat"><span className="ai-stat-label">Target</span><span className="ai-stat-value">{format(avgTarget, true)}</span></div>
-            <div className="ai-stat"><span className="ai-stat-label">MoM Growth</span><span className="ai-stat-value" style={{ color: Number(growth) >= 0 ? 'var(--success)' : 'var(--danger)' }}>{growth}%</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Billed</span><span className="ai-stat-value">{format(billed, true)}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Paid</span><span className="ai-stat-value" style={{ color: 'var(--success)' }}>{format(paid, true)}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Outstanding</span><span className="ai-stat-value" style={{ color: outstanding > 0 ? 'var(--warning)' : 'var(--text-primary)' }}>{format(outstanding, true)}</span></div>
           </div>
-          <div className="ai-divider" />
-          <div className="ai-insight">💡 Revenue is trending <strong>{Number(growth) >= 0 ? 'above' : 'below'}</strong> last month by {Math.abs(Number(growth))}%. {Number(growth) >= 0 ? 'Keep pushing the sales pipeline.' : 'Consider accelerating deal closures.'}</div>
+          <div className="ai-insight">
+            {invoices.length === 0
+              ? 'No invoices yet — create one in Accounting to start tracking revenue.'
+              : outstanding > 0
+                ? <>You have <strong>{format(outstanding, true)}</strong> still to collect across {invoices.filter((i) => i.payment !== 'Paid').length} open invoices.</>
+                : 'Every invoice is paid — your receivables are clear.'}
+          </div>
         </div>
       ),
     };
   }
 
-  // ── Leads / Pipeline
   if (q.includes('lead') || q.includes('pipeline') || q.includes('opportunity') || q.includes('highest value')) {
-    const sorted = [...crmLeads].sort((a, b) => b.revenue - a.revenue);
-    const totalVal = crmLeads.reduce((a, l) => a + l.revenue, 0);
-    const wonLeads = crmLeads.filter(l => l.stage === 's4');
+    const sorted = [...leads].sort((a, b) => b.revenue - a.revenue);
+    const totalVal = leads.reduce((a, l) => a + l.revenue, 0);
+    const won = leads.filter((l) => l.stage === 'won');
     return {
-      text: `Your CRM pipeline has ${crmLeads.length} active leads with a total value of ${format(totalVal, true)}:`,
+      text: `Your pipeline has ${leads.length} lead${leads.length === 1 ? '' : 's'} worth ${format(totalVal, true)}:`,
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
-            <div className="ai-stat"><span className="ai-stat-label">Total Leads</span><span className="ai-stat-value">{crmLeads.length}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Leads</span><span className="ai-stat-value">{leads.length}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Pipeline</span><span className="ai-stat-value">{format(totalVal, true)}</span></div>
-            <div className="ai-stat"><span className="ai-stat-label">Won</span><span className="ai-stat-value" style={{ color: 'var(--success)' }}>{wonLeads.length}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Won</span><span className="ai-stat-value" style={{ color: 'var(--success)' }}>{won.length}</span></div>
           </div>
-          <div className="ai-divider" />
-          <div className="ai-table-mini">
-            <div className="ai-table-header"><span>Lead</span><span>Stage</span><span>Value</span></div>
-            {sorted.slice(0, 5).map(l => {
-              const stage = crmStages.find(s => s.id === l.stage);
-              return (
-                <div key={l.id} className="ai-table-row">
-                  <span>{l.partner}</span>
-                  <span style={{ color: stage?.color, fontSize: '0.75rem', fontWeight: 600 }}>{stage?.name}</span>
-                  <span style={{ fontWeight: 700 }}>{format(l.revenue, true)}</span>
-                </div>
-              );
-            })}
+          {sorted.length > 0 && (
+            <div className="ai-table-mini">
+              <div className="ai-table-header"><span>Lead</span><span>Stage</span><span>Value</span></div>
+              {sorted.slice(0, 5).map((l) => {
+                const stage = stageById(l.stage);
+                return (
+                  <div key={l.id} className="ai-table-row">
+                    <span>{l.name || l.partner}</span>
+                    <span style={{ color: stage?.color, fontSize: '0.75rem', fontWeight: 600 }}>{stage?.name ?? l.stage}</span>
+                    <span style={{ fontWeight: 700 }}>{format(l.revenue, true)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="ai-insight">
+            {sorted.length > 0
+              ? <><strong>{sorted[0].name || sorted[0].partner}</strong> is your highest-value lead at {format(sorted[0].revenue, true)} — worth prioritising.</>
+              : 'Add leads in CRM to see pipeline insights here.'}
           </div>
-          <div className="ai-insight">🚀 Recommendation: <strong>{sorted[0].partner}</strong> has your highest potential at {format(sorted[0].revenue, true)}. Prioritise follow-up within 24h.</div>
         </div>
       ),
     };
   }
 
-  // ── Inventory / Stock
   if (q.includes('stock') || q.includes('inventory') || q.includes('product') || q.includes('low')) {
-    const lowStock = products.filter(p => p.status === 'Low Stock');
-    const outOfStock = products.filter(p => p.status === 'Out of Stock');
-    const totalValue = products.reduce((a, p) => a + p.qty * p.price, 0);
+    const lowStock = products.filter((p) => p.status === 'Low Stock');
+    const outOfStock = products.filter((p) => p.status === 'Out of Stock');
+    const totalValue = products.reduce((a, p) => a + p.qty * p.cost, 0);
+    const attention = [...outOfStock, ...lowStock];
     return {
-      text: `Inventory status across ${products.length} products:`,
+      text: `Inventory status across ${products.length} product${products.length === 1 ? '' : 's'}:`,
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
@@ -126,228 +119,246 @@ function generateAIResponse(
             <div className="ai-stat"><span className="ai-stat-label">Low Stock</span><span className="ai-stat-value" style={{ color: 'var(--warning)' }}>{lowStock.length}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Out of Stock</span><span className="ai-stat-value" style={{ color: 'var(--danger)' }}>{outOfStock.length}</span></div>
           </div>
-          <div className="ai-divider" />
-          {[...lowStock, ...outOfStock].map(p => (
+          {attention.map((p) => (
             <div key={p.id} className="ai-alert-row">
-              <span className={`ai-badge ${p.status === 'Out of Stock' ? 'danger' : 'warning'}`}>{p.status === 'Out of Stock' ? '❌' : '⚠️'}</span>
+              <span className={`ai-badge ${p.status === 'Out of Stock' ? 'danger' : 'warning'}`}>{p.status}</span>
               <span className="ai-alert-name">{p.name}</span>
               <span className="ai-alert-qty">Qty: {p.qty}</span>
             </div>
           ))}
-          <div className="ai-insight">📦 Recommendation: Create a purchase order for <strong>{outOfStock.map(p => p.name).join(', ') || lowStock[0]?.name}</strong> immediately.</div>
+          <div className="ai-insight">
+            {attention.length > 0
+              ? <>Reorder <strong>{attention.slice(0, 3).map((p) => p.name).join(', ')}</strong> to avoid stockouts.</>
+              : products.length === 0 ? 'No products yet — add them in Inventory.' : 'All products are above their reorder level.'}
+          </div>
         </div>
       ),
     };
   }
 
-  // ── Invoices / Overdue
   if (q.includes('invoice') || q.includes('overdue') || q.includes('unpaid') || q.includes('receivable')) {
-    const overdue = invoices.filter(i => i.payment === 'Overdue');
-    const unpaid  = invoices.filter(i => i.payment === 'Unpaid');
-    const totalAR = [...overdue, ...unpaid].reduce((a, i) => a + i.amount, 0);
+    const overdue = invoices.filter((i) => i.payment === 'Overdue');
+    const unpaid = invoices.filter((i) => i.payment === 'Unpaid');
+    const outstanding = [...overdue, ...unpaid];
+    const totalAR = outstanding.reduce((a, i) => a + i.amount, 0);
     return {
-      text: `Here's your accounts receivable status:`,
+      text: 'Your accounts-receivable status:',
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
-            <div className="ai-stat"><span className="ai-stat-label">Total AR</span><span className="ai-stat-value">{format(totalAR, true)}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Outstanding</span><span className="ai-stat-value">{format(totalAR, true)}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Overdue</span><span className="ai-stat-value" style={{ color: 'var(--danger)' }}>{overdue.length}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Pending</span><span className="ai-stat-value" style={{ color: 'var(--warning)' }}>{unpaid.length}</span></div>
           </div>
-          <div className="ai-divider" />
-          <div className="ai-table-mini">
-            <div className="ai-table-header"><span>Invoice</span><span>Customer</span><span>Amount</span><span>Status</span></div>
-            {[...overdue, ...unpaid].map(inv => (
-              <div key={inv.id} className="ai-table-row">
-                <span style={{ color: 'var(--primary-500)', fontWeight: 600 }}>{inv.id}</span>
-                <span>{inv.customer}</span>
-                <span style={{ fontWeight: 700 }}>{format(inv.amount, true)}</span>
-                <span className={`ai-badge ${inv.payment === 'Overdue' ? 'danger' : 'warning'}`}>{inv.payment}</span>
-              </div>
-            ))}
+          {outstanding.length > 0 && (
+            <div className="ai-table-mini">
+              <div className="ai-table-header"><span>Invoice</span><span>Customer</span><span>Amount</span></div>
+              {outstanding.slice(0, 6).map((inv) => (
+                <div key={inv.id} className="ai-table-row">
+                  <span style={{ color: 'var(--accent-text)', fontWeight: 600 }}>{inv.number || inv.id.slice(0, 8)}</span>
+                  <span>{inv.customer}</span>
+                  <span style={{ fontWeight: 700 }}>{format(inv.amount, true)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="ai-insight">
+            {overdue.length > 0
+              ? <><strong>{overdue[0].customer}</strong>’s invoice is overdue — a reminder could recover {format(overdue[0].amount, true)}.</>
+              : 'Nothing overdue right now.'}
           </div>
-          <div className="ai-insight">⚠️ <strong>{overdue[0]?.customer}</strong>'s invoice is overdue. Send an automated reminder immediately to recover {format(overdue[0]?.amount || 0, true)}.</div>
         </div>
       ),
     };
   }
 
-  // ── Employees / HR / Team
   if (q.includes('employee') || q.includes('team') || q.includes('staff') || q.includes('department') || q.includes('hr')) {
-    const depts = employees.reduce((acc, e) => { acc[e.dept] = (acc[e.dept] || 0) + 1; return acc; }, {} as Record<string, number>);
-    const onLeave = employees.filter(e => e.status === 'On Leave');
+    const depts = employees.reduce((acc, e) => { acc[e.dept || 'Unassigned'] = (acc[e.dept || 'Unassigned'] || 0) + 1; return acc; }, {} as Record<string, number>);
+    const onLeave = employees.filter((e) => e.status === 'On Leave');
+    const biggest = Object.entries(depts).sort((a, b) => b[1] - a[1])[0];
     return {
-      text: `Team overview across ${employees.length} employees:`,
+      text: `Team overview across ${employees.length} employee${employees.length === 1 ? '' : 's'}:`,
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
-            <div className="ai-stat"><span className="ai-stat-label">Total Staff</span><span className="ai-stat-value">{employees.length}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Staff</span><span className="ai-stat-value">{employees.length}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Departments</span><span className="ai-stat-value">{Object.keys(depts).length}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">On Leave</span><span className="ai-stat-value" style={{ color: 'var(--warning)' }}>{onLeave.length}</span></div>
           </div>
-          <div className="ai-divider" />
           {Object.entries(depts).map(([dept, count]) => (
             <div key={dept} className="ai-bar-row">
               <span className="ai-bar-label">{dept}</span>
-              <div className="ai-bar-track">
-                <div className="ai-bar-fill" style={{ width: `${((count as number) / employees.length) * 100}%`, background: 'var(--accent-500)' }} />
-              </div>
-              <span className="ai-bar-value">{count as number} people</span>
+              <div className="ai-bar-track"><div className="ai-bar-fill" style={{ width: `${(count / employees.length) * 100}%` }} /></div>
+              <span className="ai-bar-value">{count}</span>
             </div>
           ))}
-          <div className="ai-insight">👥 <strong>{(Object.entries(depts).sort((a,b)=>(b[1] as number)-(a[1] as number))[0] || ['Unknown'])[0]}</strong> is your largest department. {onLeave.length > 0 ? `${onLeave.map(e => e.name).join(', ')} ${onLeave.length === 1 ? 'is' : 'are'} currently on leave.` : 'All employees are available.'}</div>
+          <div className="ai-insight">
+            {employees.length === 0
+              ? 'No employees yet — add your team in HR.'
+              : <><strong>{biggest?.[0]}</strong> is your largest department. {onLeave.length > 0 ? `${onLeave.length} on leave.` : 'Everyone is available.'}</>}
+          </div>
         </div>
       ),
     };
   }
 
-  // ── Tickets / Support
   if (q.includes('ticket') || q.includes('support') || q.includes('urgent') || q.includes('helpdesk')) {
-    const urgent = tickets.filter(t => t.priority === 'Urgent');
-    const open = tickets.filter(t => t.status !== 'Resolved');
+    const urgent = tickets.filter((t) => t.priority === 'Urgent' && t.status !== 'Resolved');
+    const open = tickets.filter((t) => t.status !== 'Resolved');
     return {
-      text: `Support desk summary — ${open.length} tickets require attention:`,
+      text: `Support summary — ${open.length} open ticket${open.length === 1 ? '' : 's'}:`,
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
-            <div className="ai-stat"><span className="ai-stat-label">Open</span><span className="ai-stat-value">{tickets.filter(t=>t.status==='Open').length}</span></div>
-            <div className="ai-stat"><span className="ai-stat-label">In Progress</span><span className="ai-stat-value" style={{ color: 'var(--primary-500)' }}>{tickets.filter(t=>t.status==='In Progress').length}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Open</span><span className="ai-stat-value">{tickets.filter((t) => t.status === 'Open').length}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">In Progress</span><span className="ai-stat-value" style={{ color: 'var(--info)' }}>{tickets.filter((t) => t.status === 'In Progress').length}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Urgent</span><span className="ai-stat-value" style={{ color: 'var(--danger)' }}>{urgent.length}</span></div>
           </div>
-          <div className="ai-divider" />
-          <div className="ai-table-mini">
-            <div className="ai-table-header"><span>Ticket</span><span>Customer</span><span>Priority</span></div>
-            {tickets.filter(t => t.status !== 'Resolved').map(t => (
-              <div key={t.id} className="ai-table-row">
-                <span style={{ color: 'var(--primary-500)', fontWeight: 600 }}>{t.id}</span>
-                <span>{t.customer}</span>
-                <span className={`ai-badge ${t.priority === 'Urgent' ? 'danger' : t.priority === 'High' ? 'warning' : 'info'}`}>{t.priority}</span>
-              </div>
-            ))}
+          {open.length > 0 && (
+            <div className="ai-table-mini">
+              <div className="ai-table-header"><span>Subject</span><span>Customer</span><span>Priority</span></div>
+              {open.slice(0, 6).map((t) => (
+                <div key={t.id} className="ai-table-row">
+                  <span>{t.title}</span>
+                  <span>{t.customer}</span>
+                  <span className={`ai-badge ${t.priority === 'Urgent' ? 'danger' : t.priority === 'High' ? 'warning' : 'info'}`}>{t.priority}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="ai-insight">
+            {urgent.length > 0
+              ? <>Ticket from <strong>{urgent[0].customer}</strong> is urgent — assign it before it breaches SLA.</>
+              : open.length === 0 ? 'No open tickets.' : 'No urgent tickets — response times look healthy.'}
           </div>
-          <div className="ai-insight">🚨 {urgent.length > 0 ? `Ticket ${urgent[0].id} from ${urgent[0].customer} is URGENT — assign immediately to avoid SLA breach.` : 'No urgent tickets — good job maintaining response times!'}</div>
         </div>
       ),
     };
   }
 
-  // ── Projects
   if (q.includes('project') || q.includes('task') || q.includes('performing')) {
-    const active = projects.filter(p => p.status === 'In Progress');
-    const avgProgress = Math.round(active.reduce((a, p) => a + p.progress, 0) / (active.length || 1));
+    const active = projects.filter((p) => p.status === 'In Progress');
+    const avgProgress = active.length ? Math.round(active.reduce((a, p) => a + p.progress, 0) / active.length) : 0;
+    const mostProgressed = [...active].sort((a, b) => b.progress - a.progress)[0];
     return {
-      text: `Project portfolio health — ${active.length} active projects:`,
+      text: `Project health — ${active.length} active:`,
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
             <div className="ai-stat"><span className="ai-stat-label">Active</span><span className="ai-stat-value">{active.length}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Avg Progress</span><span className="ai-stat-value">{avgProgress}%</span></div>
-            <div className="ai-stat"><span className="ai-stat-label">Completed</span><span className="ai-stat-value" style={{ color: 'var(--success)' }}>{projects.filter(p=>p.status==='Completed').length}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Completed</span><span className="ai-stat-value" style={{ color: 'var(--success)' }}>{projects.filter((p) => p.status === 'Completed').length}</span></div>
           </div>
-          <div className="ai-divider" />
-          {projects.map(p => (
+          {active.map((p) => (
             <div key={p.id} className="ai-bar-row">
-              <span className="ai-bar-label" style={{ maxWidth: 110 }}>{p.name.substring(0, 16)}…</span>
-              <div className="ai-bar-track">
-                <div className="ai-bar-fill" style={{ width: `${p.progress}%`, background: p.status === 'Completed' ? 'var(--success)' : 'var(--gradient-ai)' }} />
-              </div>
+              <span className="ai-bar-label">{p.name}</span>
+              <div className="ai-bar-track"><div className="ai-bar-fill" style={{ width: `${p.progress}%` }} /></div>
               <span className="ai-bar-value">{p.progress}%</span>
             </div>
           ))}
-          <div className="ai-insight">📋 <strong>{active.sort((a,b) => b.progress - a.progress)[0]?.name}</strong> is your most progressed active project at {active.sort((a,b) => b.progress - a.progress)[0]?.progress}%.</div>
+          <div className="ai-insight">
+            {mostProgressed
+              ? <><strong>{mostProgressed.name}</strong> is furthest along at {mostProgressed.progress}%.</>
+              : projects.length === 0 ? 'No projects yet — create one in Projects.' : 'No active projects right now.'}
+          </div>
         </div>
       ),
     };
   }
 
-  // ── Manufacturing
   if (q.includes('manufactur') || q.includes('production') || q.includes('order status')) {
-    const inProg = manufacturingOrders.filter(m => m.status === 'In Progress');
-    const planned = manufacturingOrders.filter(m => m.status === 'Planned');
+    const inProg = manufacturingOrders.filter((m) => m.status === 'In Progress');
+    const planned = manufacturingOrders.filter((m) => m.status === 'Planned');
     return {
-      text: `Manufacturing floor summary:`,
+      text: 'Manufacturing summary:',
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
-            <div className="ai-stat"><span className="ai-stat-label">Total Orders</span><span className="ai-stat-value">{manufacturingOrders.length}</span></div>
-            <div className="ai-stat"><span className="ai-stat-label">In Progress</span><span className="ai-stat-value" style={{ color: 'var(--primary-500)' }}>{inProg.length}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Orders</span><span className="ai-stat-value">{manufacturingOrders.length}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">In Progress</span><span className="ai-stat-value" style={{ color: 'var(--info)' }}>{inProg.length}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Planned</span><span className="ai-stat-value" style={{ color: 'var(--warning)' }}>{planned.length}</span></div>
           </div>
-          <div className="ai-divider" />
-          {manufacturingOrders.map(mo => (
+          {manufacturingOrders.slice(0, 6).map((mo) => (
             <div key={mo.id} className="ai-table-row">
-              <span style={{ color: 'var(--primary-500)', fontWeight: 600 }}>{mo.id}</span>
               <span>{mo.product}</span>
-              <span>Qty: {mo.qty}</span>
+              <span>Qty {mo.qty}</span>
               <span className={`ai-badge ${mo.status === 'Done' ? 'success' : mo.status === 'In Progress' ? 'info' : 'warning'}`}>{mo.status}</span>
             </div>
           ))}
-          <div className="ai-insight">🏭 {inProg.length > 0 ? `${inProg[0].product} is actively being produced at ${inProg[0].workcenter}.` : 'No active production orders.'} Schedule the next batch for {planned[0]?.scheduled || 'this week'}.</div>
+          <div className="ai-insight">
+            {inProg.length > 0
+              ? <><strong>{inProg[0].product}</strong> is in production{inProg[0].workcenter ? ` at ${inProg[0].workcenter}` : ''}.</>
+              : manufacturingOrders.length === 0 ? 'No manufacturing orders yet.' : 'No orders currently in production.'}
+          </div>
         </div>
       ),
     };
   }
 
-  // ── Sales / Orders
   if (q.includes('sales') || q.includes('order')) {
-    const totalRevSales = salesOrders.reduce((a, o) => a + o.total, 0);
-    const confirmed = salesOrders.filter(o => o.status === 'Confirmed');
-    const topOrder = [...salesOrders].sort((a, b) => b.total - a.total)[0];
+    const totalRev = salesOrders.reduce((a, o) => a + o.total, 0);
+    const confirmed = salesOrders.filter((o) => o.status === 'Confirmed');
+    const avg = salesOrders.length ? totalRev / salesOrders.length : 0;
+    const top = [...salesOrders].sort((a, b) => b.total - a.total);
     return {
-      text: `Sales performance summary across ${salesOrders.length} orders:`,
+      text: `Sales across ${salesOrders.length} order${salesOrders.length === 1 ? '' : 's'}:`,
       data: (
         <div className="ai-data-card">
           <div className="ai-stat-row">
-            <div className="ai-stat"><span className="ai-stat-label">Total Revenue</span><span className="ai-stat-value">{format(totalRevSales, true)}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Total</span><span className="ai-stat-value">{format(totalRev, true)}</span></div>
             <div className="ai-stat"><span className="ai-stat-label">Confirmed</span><span className="ai-stat-value" style={{ color: 'var(--success)' }}>{confirmed.length}</span></div>
-            <div className="ai-stat"><span className="ai-stat-label">Avg. Order</span><span className="ai-stat-value">{format(totalRevSales / salesOrders.length, true)}</span></div>
+            <div className="ai-stat"><span className="ai-stat-label">Avg. Order</span><span className="ai-stat-value">{format(avg, true)}</span></div>
           </div>
-          <div className="ai-divider" />
-          <div className="ai-table-mini">
-            <div className="ai-table-header"><span>Order</span><span>Customer</span><span>Total</span></div>
-            {[...salesOrders].sort((a,b)=>b.total-a.total).slice(0,5).map(o => (
-              <div key={o.id} className="ai-table-row">
-                <span style={{ color: 'var(--primary-500)', fontWeight: 600 }}>{o.id}</span>
-                <span>{o.customer}</span>
-                <span style={{ fontWeight: 700 }}>{format(o.total, true)}</span>
-              </div>
-            ))}
+          {top.length > 0 && (
+            <div className="ai-table-mini">
+              <div className="ai-table-header"><span>Order</span><span>Customer</span><span>Total</span></div>
+              {top.slice(0, 5).map((o) => (
+                <div key={o.id} className="ai-table-row">
+                  <span style={{ color: 'var(--accent-text)', fontWeight: 600 }}>{o.number || o.id.slice(0, 8)}</span>
+                  <span>{o.customer}</span>
+                  <span style={{ fontWeight: 700 }}>{format(o.total, true)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="ai-insight">
+            {top.length > 0
+              ? <>Your largest order is <strong>{top[0].customer}</strong> at {format(top[0].total, true)}.</>
+              : 'Create sales orders to start tracking performance.'}
           </div>
-          <div className="ai-insight">💼 Your largest order is <strong>{topOrder.customer}</strong> at {format(topOrder.total, true)}. Follow up to ensure timely delivery and upsell opportunities.</div>
         </div>
       ),
     };
   }
 
-  // ── AI Recommendations
   if (q.includes('recommend') || q.includes('insight') || q.includes('suggest') || q.includes('advice')) {
-    const overdueInv = invoices.filter(i => i.payment === 'Overdue');
-    const urgentTkts = tickets.filter(t => t.priority === 'Urgent');
-    const lowStockP  = products.filter(p => p.status !== 'In Stock');
-    const topLead    = [...crmLeads].sort((a,b) => b.revenue - a.revenue)[0];
+    const overdueInv = invoices.filter((i) => i.payment === 'Overdue');
+    const urgentTkts = tickets.filter((t) => t.priority === 'Urgent' && t.status !== 'Resolved');
+    const lowStockP = products.filter((p) => p.status !== 'In Stock');
+    const topLead = [...leads].sort((a, b) => b.revenue - a.revenue)[0];
     return {
-      text: `Here are my top 3 business recommendations based on your current data:`,
+      text: 'Based on your current data, here’s where to focus:',
       data: (
         <div className="ai-data-card">
           <div className="ai-recommendation">
             <div className="ai-rec-num">1</div>
             <div>
-              <div className="ai-rec-title">💰 Recover Overdue Revenue</div>
-              <div className="ai-rec-body">{overdueInv.length > 0 ? `${overdueInv[0].customer}'s invoice of $${overdueInv[0].amount.toLocaleString()} is overdue. Send escalation email today.` : 'All invoices are current — great financial health!'}</div>
+              <div className="ai-rec-title">Recover outstanding revenue</div>
+              <div className="ai-rec-body">{overdueInv.length > 0 ? `${overdueInv[0].customer}’s invoice of ${format(overdueInv[0].amount, true)} is overdue — follow up today.` : 'All invoices are current.'}</div>
             </div>
           </div>
           <div className="ai-recommendation">
             <div className="ai-rec-num">2</div>
             <div>
-              <div className="ai-rec-title">🎯 Close High-Value Pipeline</div>
-              <div className="ai-rec-body">{topLead.partner}'s deal worth ${topLead.revenue.toLocaleString()} is at {topLead.probability}% probability. A personal call could push it to closure this week.</div>
+              <div className="ai-rec-title">Advance your best deal</div>
+              <div className="ai-rec-body">{topLead ? `${topLead.name || topLead.partner} is worth ${format(topLead.revenue, true)} at ${topLead.probability}% — a call could move it forward.` : 'Add and qualify leads in CRM.'}</div>
             </div>
           </div>
           <div className="ai-recommendation">
             <div className="ai-rec-num">3</div>
             <div>
-              <div className="ai-rec-title">{urgentTkts.length > 0 ? '🚨 Resolve Urgent Support' : '📦 Restock Inventory'}</div>
-              <div className="ai-rec-body">{urgentTkts.length > 0 ? `${urgentTkts[0].customer} has an URGENT ticket that risks your SLA. Assign to a senior agent now.` : `${lowStockP.length} products need restocking. Raise purchase orders to avoid stockouts.`}</div>
+              <div className="ai-rec-title">{urgentTkts.length > 0 ? 'Resolve urgent support' : 'Restock inventory'}</div>
+              <div className="ai-rec-body">{urgentTkts.length > 0 ? `${urgentTkts[0].customer} has an urgent ticket — assign it now.` : lowStockP.length > 0 ? `${lowStockP.length} product${lowStockP.length === 1 ? '' : 's'} need restocking.` : 'Inventory levels are healthy.'}</div>
             </div>
           </div>
         </div>
@@ -355,233 +366,127 @@ function generateAIResponse(
     };
   }
 
-  // ── Default / Fallback
   return {
-    text: `I found relevant data across your business. Here's a quick executive summary:`,
+    text: 'Here’s a quick snapshot of your workspace:',
     data: (
       <div className="ai-data-card">
         <div className="ai-stat-row">
-          <div className="ai-stat"><span className="ai-stat-label">Active Leads</span><span className="ai-stat-value">{crmLeads.length}</span></div>
-          <div className="ai-stat"><span className="ai-stat-label">Open Orders</span><span className="ai-stat-value">{salesOrders.filter(o=>o.status!=='Done').length}</span></div>
-          <div className="ai-stat"><span className="ai-stat-label">Team Size</span><span className="ai-stat-value">{employees.length}</span></div>
+          <div className="ai-stat"><span className="ai-stat-label">Leads</span><span className="ai-stat-value">{leads.length}</span></div>
+          <div className="ai-stat"><span className="ai-stat-label">Open Orders</span><span className="ai-stat-value">{salesOrders.filter((o) => o.status !== 'Done').length}</span></div>
+          <div className="ai-stat"><span className="ai-stat-label">Team</span><span className="ai-stat-value">{employees.length}</span></div>
         </div>
-        <div className="ai-stat-row" style={{ marginTop: 8 }}>
-          <div className="ai-stat"><span className="ai-stat-label">Open Tickets</span><span className="ai-stat-value">{tickets.filter(t=>t.status!=='Resolved').length}</span></div>
-          <div className="ai-stat"><span className="ai-stat-label">Low Stock Items</span><span className="ai-stat-value">{products.filter(p=>p.status!=='In Stock').length}</span></div>
-          <div className="ai-stat"><span className="ai-stat-label">Projects</span><span className="ai-stat-value">{projects.filter(p=>p.status==='In Progress').length}</span></div>
+        <div className="ai-stat-row">
+          <div className="ai-stat"><span className="ai-stat-label">Open Tickets</span><span className="ai-stat-value">{tickets.filter((t) => t.status !== 'Resolved').length}</span></div>
+          <div className="ai-stat"><span className="ai-stat-label">Low Stock</span><span className="ai-stat-value">{products.filter((p) => p.status !== 'In Stock').length}</span></div>
+          <div className="ai-stat"><span className="ai-stat-label">Projects</span><span className="ai-stat-value">{projects.filter((p) => p.status === 'In Progress').length}</span></div>
         </div>
-        <div className="ai-insight">🤖 Ask me anything about your CRM, sales, inventory, HR, finance, or operations — I have full access to your business data.</div>
+        <div className="ai-insight">Ask about your CRM, sales, inventory, finance, HR, or operations and I’ll pull the numbers from your live data.</div>
       </div>
     ),
   };
 }
 
-// ── Typing animation hook ────────────────────────────────────────
-function useTypewriter(text: string, speed = 22) {
-  const [displayed, setDisplayed] = useState('');
-  const [done, setDone] = useState(false);
-  useEffect(() => {
-    setDisplayed('');
-    setDone(false);
-    let i = 0;
-    const id = setInterval(() => {
-      i++;
-      setDisplayed(text.slice(0, i));
-      if (i >= text.length) { clearInterval(id); setDone(true); }
-    }, speed);
-    return () => clearInterval(id);
-  }, [text, speed]);
-  return { displayed, done };
-}
-
-// ── Single message component ────────────────────────────────────
-function AIMessage({ msg, isLast }: { msg: Message; isLast: boolean }) {
-  const { displayed, done } = useTypewriter(
-    msg.role === 'ai' && isLast ? msg.text : msg.text,
-    msg.role === 'ai' && isLast ? 20 : 0
-  );
-
+function AIMessage({ msg }: { msg: Message }) {
   return (
-    <div className={`ai-msg ${msg.role}`} style={{ animationDelay: '0ms' }}>
-      {msg.role === 'ai' && (
-        <div className="ai-avatar-bubble">
-          <span style={{ fontSize: '0.875rem' }}>✨</span>
-        </div>
+    <div className={`ai-msg ${msg.role === 'user' ? 'user' : ''}`}>
+      {msg.role === 'assistant' && (
+        <div className="ai-avatar-bubble"><Icon name="spark" size={16} /></div>
       )}
       <div className="ai-bubble">
-        <p className="ai-bubble-text">
-          {msg.role === 'ai' && isLast ? displayed : msg.text}
-          {msg.role === 'ai' && isLast && !done && <span className="ai-cursor" />}
-        </p>
-        {msg.data && done && (
-          <div className="ai-bubble-data" style={{ animation: 'fadeIn 0.3s ease' }}>
-            {msg.data}
-          </div>
-        )}
-        <span className="ai-ts">
-          {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </span>
+        <p className="ai-bubble-text">{msg.text}</p>
+        {msg.data && <div className="ai-bubble-data">{msg.data}</div>}
+        <span className="ai-ts">{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
       </div>
     </div>
   );
 }
 
-// ── Main AI Panel ────────────────────────────────────────────────
+const welcome = (): Message => ({
+  id: '0',
+  role: 'assistant',
+  text: 'Ask about your CRM, sales, inventory, finance, HR, or operations — I’ll pull the numbers straight from your live data.',
+  timestamp: new Date(),
+});
+
 export default function AIPanel() {
   const { aiPanelOpen, setAIPanelOpen } = useUIStore();
-  const { format } = useCurrencyStore();
-  const dataStore = useDataStore();
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '0',
-      role: 'ai',
-      text: 'Hello! I\'m Erpixa AI, your intelligent business assistant. I have full access to your CRM, sales, inventory, accounting, HR, and operations data. How can I help you today?',
-      timestamp: new Date(),
-    },
-  ]);
+  const format = useCurrencyStore((s) => s.format);
+  const [messages, setMessages] = useState<Message[]>([welcome()]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<string>('All');
+  const [activeCategory, setActiveCategory] = useState('All');
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const categories = ['All', ...Array.from(new Set(QUICK_PROMPTS.map(p => p.category)))];
+  const categories = ['All', ...Array.from(new Set(QUICK_PROMPTS.map((p) => p.category)))];
+  const filteredPrompts = activeCategory === 'All' ? QUICK_PROMPTS : QUICK_PROMPTS.filter((p) => p.category === activeCategory);
 
-  const filteredPrompts = activeCategory === 'All' ? QUICK_PROMPTS : QUICK_PROMPTS.filter(p => p.category === activeCategory);
-
-  const scrollToBottom = useCallback(() => {
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-  }, []);
-
-  const sendMessage = useCallback(async (query: string) => {
-    if (!query.trim() || loading) return;
+  const send = useCallback((query: string) => {
+    if (!query.trim()) return;
     const userMsg: Message = { id: Date.now().toString(), role: 'user', text: query, timestamp: new Date() };
-    setMessages(prev => [...prev, userMsg]);
+    const answer = answerQuery(query, format, useDataStore.getState());
+    const reply: Message = { id: `${Date.now()}-a`, role: 'assistant', text: answer.text, data: answer.data, timestamp: new Date() };
+    setMessages((prev) => [...prev, userMsg, reply]);
     setInput('');
-    setLoading(true);
-    scrollToBottom();
+  }, [format]);
 
-    await new Promise(r => setTimeout(r, 600 + Math.random() * 400));
-
-    const { text, data } = generateAIResponse(query, format, dataStore);
-    const aiMsg: Message = { id: (Date.now() + 1).toString(), role: 'ai', text, data, timestamp: new Date() };
-    setMessages(prev => [...prev, aiMsg]);
-    setLoading(false);
-    scrollToBottom();
-  }, [loading, format, scrollToBottom, dataStore]);
-
-  useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   if (!aiPanelOpen) return null;
 
   return (
     <>
-      {/* Overlay backdrop */}
-      <div
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.15)', zIndex: 900, backdropFilter: 'blur(2px)' }}
-        onClick={() => setAIPanelOpen(false)}
-      />
-
-      {/* Panel */}
-      <div className="ai-panel" style={{ animation: 'slideInRight 0.28s cubic-bezier(0.4,0,0.2,1)' }}>
-        {/* Header */}
+      <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-overlay)', zIndex: 900 }} onClick={() => setAIPanelOpen(false)} />
+      <div className="ai-panel">
         <div className="ai-panel-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-            <div className="ai-panel-logo">
-              <span style={{ fontSize: '1.25rem' }}>✨</span>
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="ai-panel-logo"><Icon name="spark" size={18} /></div>
             <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', lineHeight: 1 }}>
-                Erpixa <span style={{ background: 'var(--gradient-ai)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>AI</span> Assistant
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)', marginTop: 2 }}>
-                <span className="ai-orb-small" />  Connected to your live data
-              </div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '0.95rem', lineHeight: 1.1, color: 'var(--text-primary)' }}>Insights</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>Answers from your live data</div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button
-              onClick={() => setMessages([{ id: '0', role: 'ai', text: 'Chat cleared. What would you like to know?', timestamp: new Date() }])}
-              style={{ background: 'rgba(255,255,255,0.12)', border: 'none', color: '#fff', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 500 }}
-            >
-              Clear
-            </button>
-            <button
-              onClick={() => setAIPanelOpen(false)}
-              style={{ background: 'rgba(255,255,255,0.12)', border: 'none', color: '#fff', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: '1.1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >×</button>
+            <button className="btn btn-sm btn-ghost" onClick={() => setMessages([welcome()])}>Clear</button>
+            <button className="topnav-icon-btn" onClick={() => setAIPanelOpen(false)} aria-label="Close"><Icon name="close" size={18} /></button>
           </div>
         </div>
 
-        {/* Quick prompts */}
         <div className="ai-quick-section">
           <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-            {categories.map(c => (
-              <button
-                key={c}
-                className={`ai-cat-btn ${activeCategory === c ? 'active' : ''}`}
-                onClick={() => setActiveCategory(c)}
-              >{c}</button>
+            {categories.map((c) => (
+              <button key={c} className={`ai-cat-btn ${activeCategory === c ? 'active' : ''}`} onClick={() => setActiveCategory(c)}>{c}</button>
             ))}
           </div>
           <div className="ai-quick-grid">
-            {filteredPrompts.map((p, i) => (
-              <button
-                key={i}
-                className="ai-quick-btn"
-                onClick={() => sendMessage(p.query)}
-                disabled={loading}
-                style={{ animationDelay: `${i * 40}ms` }}
-              >
-                <span className="ai-quick-icon">{p.icon}</span>
+            {filteredPrompts.map((p) => (
+              <button key={p.label} className="ai-quick-btn" onClick={() => send(p.query)}>
+                <span className="ai-quick-icon"><Icon name={p.icon} size={15} /></span>
                 <span>{p.label}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Messages */}
         <div className="ai-messages">
-          {messages.map((msg, idx) => (
-            <AIMessage key={msg.id} msg={msg} isLast={idx === messages.length - 1} />
-          ))}
-
-          {/* Loading indicator */}
-          {loading && (
-            <div className="ai-msg ai" style={{ animation: 'fadeIn 0.2s ease' }}>
-              <div className="ai-avatar-bubble"><span style={{ fontSize: '0.875rem' }}>✨</span></div>
-              <div className="ai-bubble">
-                <div className="ai-thinking">
-                  <span /><span /><span />
-                </div>
-              </div>
-            </div>
-          )}
+          {messages.map((msg) => <AIMessage key={msg.id} msg={msg} />)}
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
         <div className="ai-input-area">
           <div className="ai-input-wrap">
             <input
               className="ai-input"
               placeholder="Ask about your business data…"
               value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
-              disabled={loading}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
             />
-            <button
-              className="ai-send-btn"
-              onClick={() => sendMessage(input)}
-              disabled={!input.trim() || loading}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            <button className="ai-send-btn" onClick={() => send(input)} disabled={!input.trim()} aria-label="Send">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
               </svg>
             </button>
-          </div>
-          <div style={{ textAlign: 'center', marginTop: 8, fontSize: '0.7rem', color: 'var(--text-disabled)' }}>
-            Powered by Erpixa AI Engine · Responses use your live business data
           </div>
         </div>
       </div>

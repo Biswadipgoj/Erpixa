@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useUIStore, useAuthStore, useNotificationStore } from '../../store';
 import { useDataStore } from '../../store/dataStore';
 import CurrencySelector from '../ui/CurrencySelector';
+import Icon from '../ui/Icon';
 
 const NOTIF_ICONS: Record<string, string> = {
-  lead: '🎯', invoice: '🧾', task: '✅', ticket: '🎫', info: '🔔',
+  lead: 'crm', invoice: 'accounting', task: 'check', ticket: 'helpdesk', info: 'bell',
 };
 
 interface SearchHit {
@@ -33,47 +34,47 @@ function useGlobalSearch(query: string): SearchHit[] {
 
     for (const l of leads) {
       if (l.name.toLowerCase().includes(q) || l.partner.toLowerCase().includes(q)) {
-        push('crm', { id: l.id, label: l.name, sublabel: l.partner, icon: '🎯', path: '/crm' });
+        push('crm', { id: l.id, label: l.name, sublabel: l.partner, icon: 'crm', path: '/crm' });
       }
     }
     for (const o of salesOrders) {
       if (o.customer.toLowerCase().includes(q) || o.number.toLowerCase().includes(q)) {
-        push('sales', { id: o.id, label: o.number || o.customer, sublabel: o.customer, icon: '💼', path: '/sales' });
+        push('sales', { id: o.id, label: o.number || o.customer, sublabel: o.customer, icon: 'sales', path: '/sales' });
       }
     }
     for (const c of customers) {
       if (c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)) {
-        push('sales', { id: c.id, label: c.name, sublabel: c.email || 'Customer', icon: '👤', path: '/sales' });
+        push('sales', { id: c.id, label: c.name, sublabel: c.email || 'Customer', icon: 'user', path: '/sales' });
       }
     }
     for (const p of products) {
       if (p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)) {
-        push('inventory', { id: p.id, label: p.name, sublabel: p.category || p.sku, icon: '📦', path: '/inventory' });
+        push('inventory', { id: p.id, label: p.name, sublabel: p.category || p.sku, icon: 'inventory', path: '/inventory' });
       }
     }
     for (const s of suppliers) {
       if (s.name.toLowerCase().includes(q)) {
-        push('inventory', { id: s.id, label: s.name, sublabel: 'Supplier', icon: '🚚', path: '/inventory' });
+        push('inventory', { id: s.id, label: s.name, sublabel: 'Supplier', icon: 'truck', path: '/inventory' });
       }
     }
     for (const i of invoices) {
       if (i.customer.toLowerCase().includes(q) || i.number.toLowerCase().includes(q)) {
-        push('accounting', { id: i.id, label: i.number || i.customer, sublabel: i.customer, icon: '🧾', path: '/accounting' });
+        push('accounting', { id: i.id, label: i.number || i.customer, sublabel: i.customer, icon: 'accounting', path: '/accounting' });
       }
     }
     for (const e of employees) {
       if (e.name.toLowerCase().includes(q) || e.dept.toLowerCase().includes(q)) {
-        push('hr', { id: e.id, label: e.name, sublabel: e.role || e.dept, icon: '👥', path: '/hr' });
+        push('hr', { id: e.id, label: e.name, sublabel: e.role || e.dept, icon: 'hr', path: '/hr' });
       }
     }
     for (const p of projects) {
       if (p.name.toLowerCase().includes(q) || p.client.toLowerCase().includes(q)) {
-        push('projects', { id: p.id, label: p.name, sublabel: p.client, icon: '📋', path: '/projects' });
+        push('projects', { id: p.id, label: p.name, sublabel: p.client, icon: 'projects', path: '/projects' });
       }
     }
     for (const t of tickets) {
       if (t.title.toLowerCase().includes(q) || t.customer.toLowerCase().includes(q)) {
-        push('helpdesk', { id: t.id, label: t.title, sublabel: t.customer, icon: '🎫', path: '/helpdesk' });
+        push('helpdesk', { id: t.id, label: t.title, sublabel: t.customer, icon: 'helpdesk', path: '/helpdesk' });
       }
     }
     return hits.slice(0, 8);
@@ -194,8 +195,8 @@ export default function TopNav() {
                 style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}
                 onClick={() => openHit(hit)}
               >
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', flexShrink: 0 }} aria-hidden="true">
-                  {hit.icon}
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--bg-subtle)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }} aria-hidden="true">
+                  <Icon name={hit.icon} size={16} />
                 </div>
                 <div style={{ flex: 1, overflow: 'hidden' }}>
                   <div className="truncate" style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{hit.label}</div>
@@ -233,19 +234,19 @@ export default function TopNav() {
           {notifPanelOpen && (
             <div className="notif-panel" style={{ top: 'calc(100% + 8px)', right: 0, position: 'absolute', zIndex: 600 }}>
               <div style={{
-                padding: '12px 16px', borderBottom: '1.5px solid var(--border)',
-                background: 'var(--grad-ai)', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px', borderBottom: '1px solid var(--border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               }}>
-                <span style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, color: '#fff', fontSize: '0.9375rem' }}>
+                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.9375rem' }}>
                   Notifications
                 </span>
-                <span style={{ background: 'rgba(255,255,255,0.25)', color: '#fff', fontSize: '0.7rem', fontWeight: 800, padding: '2px 8px', borderRadius: 99 }}>
-                  {unreadCount} new
-                </span>
+                {unreadCount > 0 && (
+                  <span className="badge badge-primary">{unreadCount} new</span>
+                )}
               </div>
               {notifications.length === 0 ? (
                 <div style={{ padding: '28px 16px', textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  🔔 No notifications yet.<br />Activity in your workspace will show up here.
+                  No notifications yet.<br />Activity in your workspace will show up here.
                 </div>
               ) : notifications.map((n) => (
                 <button
@@ -257,11 +258,12 @@ export default function TopNav() {
                   title={n.unread ? 'Mark as read' : undefined}
                 >
                   <div style={{
-                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-                    background: n.unread ? 'var(--grad-ai)' : 'var(--bg-subtle)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem',
+                    width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+                    background: n.unread ? 'var(--accent-soft)' : 'var(--bg-subtle)',
+                    color: n.unread ? 'var(--accent)' : 'var(--text-muted)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }} aria-hidden="true">
-                    {NOTIF_ICONS[n.type] || '🔔'}
+                    <Icon name={NOTIF_ICONS[n.type] || 'bell'} size={16} />
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '0.875rem', fontWeight: n.unread ? 700 : 500, color: 'var(--text-primary)' }}>{n.text}</div>
@@ -289,18 +291,16 @@ export default function TopNav() {
         {/* AI Button */}
         <button
           onClick={() => setAIPanelOpen(!aiPanelOpen)}
+          className="btn btn-sm"
           style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '6px 14px', height: 36,
-            background: aiPanelOpen ? 'var(--violet-700)' : 'var(--grad-ai)',
-            border: 'none', borderRadius: 'var(--r-full)', cursor: 'pointer',
-            color: '#fff', fontWeight: 700, fontSize: '0.8125rem', fontFamily: "'Inter',sans-serif",
-            boxShadow: '0 4px 14px rgba(99,102,241,0.35)', transition: 'var(--transition)',
+            height: 34,
+            background: aiPanelOpen ? 'var(--accent-hover)' : 'var(--accent)',
+            color: '#fff', borderRadius: 'var(--r-full)',
           }}
-          title="Ask Erpixa AI"
+          title="Insights from your data"
         >
-          <span style={{ fontSize: '0.9rem' }} aria-hidden="true">✨</span>
-          <span>Ask AI</span>
+          <Icon name="spark" size={15} />
+          <span>Insights</span>
         </button>
 
         {/* User menu */}
@@ -311,11 +311,10 @@ export default function TopNav() {
             aria-label="Account menu"
             aria-expanded={userMenuOpen}
             style={{
-              width: 34, height: 34, background: 'var(--grad-ai)',
+              width: 34, height: 34, background: 'var(--accent)',
               borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.7rem', fontWeight: 800, color: '#fff', cursor: 'pointer',
-              boxShadow: '0 2px 8px rgba(124,58,237,0.35)', flexShrink: 0,
-              border: '2px solid white', transition: 'var(--transition)', padding: 0,
+              fontSize: '0.72rem', fontWeight: 700, color: '#fff', cursor: 'pointer',
+              flexShrink: 0, transition: 'var(--transition)', padding: 0,
             }}
             title={user?.full_name}
           >
@@ -333,7 +332,7 @@ export default function TopNav() {
                 style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}
                 onClick={() => { setUserMenuOpen(false); navigate('/settings'); setCurrentModule('Settings'); }}
               >
-                <span aria-hidden="true">⚙️</span>
+                <Icon name="settings" size={16} />
                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>Profile &amp; settings</span>
               </button>
               <button
@@ -342,7 +341,7 @@ export default function TopNav() {
                 style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}
                 onClick={signOut}
               >
-                <span aria-hidden="true">🚪</span>
+                <span style={{ color: 'var(--danger)', display: 'flex' }}><Icon name="logout" size={16} /></span>
                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--danger)' }}>Sign out</span>
               </button>
             </div>

@@ -1,5 +1,10 @@
 import { useUIStore } from '../../store';
 import type { Toast } from '../../store';
+import Icon from './Icon';
+
+const TOAST_ICON: Record<Toast['type'], string> = {
+  success: 'check', danger: 'alert', warning: 'alert', info: 'bell',
+};
 
 export function ToastContainer() {
   const { toasts, removeToast } = useUIStore();
@@ -12,15 +17,13 @@ export function ToastContainer() {
 }
 
 function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
-  const icons: Record<Toast['type'], string> = { success: '✅', danger: '❌', warning: '⚠️', info: 'ℹ️' };
   return (
-    <div className={`toast toast-${toast.type}`} style={{ animation: 'slideInRight 0.2s ease' }}>
-      <span>{icons[toast.type]}</span>
+    <div className={`toast toast-${toast.type}`}>
+      <span className="toast-icon"><Icon name={TOAST_ICON[toast.type]} size={18} /></span>
       <span style={{ flex: 1 }}>{toast.message}</span>
-      <button
-        onClick={onClose}
-        style={{ color: 'rgba(255,255,255,0.6)', marginLeft: 'var(--space-2)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1 }}
-      >×</button>
+      <button onClick={onClose} className="topnav-icon-btn" style={{ width: 24, height: 24 }} aria-label="Dismiss">
+        <Icon name="close" size={15} />
+      </button>
     </div>
   );
 }

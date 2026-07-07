@@ -1,47 +1,34 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { Sidebar, AppSwitcher } from './components/Layout/Sidebar';
 import TopNav from './components/Layout/TopNav';
 import { ToastContainer } from './components/ui/Toast';
 import AIPanel from './components/ui/AIPanel';
-import { useAuthStore } from './store';
+import { useAuthStore, useUIStore } from './store';
 import { useDataStore } from './store/dataStore';
 import { isSupabaseConfigured } from './lib/supabase';
 import { MODULES } from './lib/modules';
+import Icon from './components/ui/Icon';
 
-// Pages
+// Shell pages — always in the critical path, loaded eagerly.
 import LoginPage from './pages/LoginPage';
 import AuthCallbackPage from './pages/AuthCallbackPage';
 import OnboardingPage from './pages/OnboardingPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
-import DashboardPage from './pages/DashboardPage';
-import CRMPage from './pages/CRMPage';
-import SalesPage from './pages/SalesPage';
-import InventoryPage from './pages/InventoryPage';
-import AccountingPage from './pages/AccountingPage';
-import HRPage from './pages/HRPage';
-import ProjectsPage from './pages/ProjectsPage';
-import ManufacturingPage from './pages/ManufacturingPage';
-import HelpdeskPage from './pages/HelpdeskPage';
-import MarketingPage from './pages/MarketingPage';
-import SettingsPage from './pages/SettingsPage';
-import AdminPage from './pages/AdminPage';
 
-// Domain-Specific Pages
-import POSPage from './pages/POSPage';
-import KitchenPage from './pages/KitchenPage';
-import TablesPage from './pages/TablesPage';
-import MenuPage from './pages/MenuPage';
-import DeliveryPage from './pages/DeliveryPage';
-import ReservationsPage from './pages/ReservationsPage';
-import BOMPage from './pages/BOMPage';
-import MRPPage from './pages/MRPPage';
-import FactoryPage from './pages/FactoryPage';
-import MachinesPage from './pages/MachinesPage';
-import PurchasePage from './pages/PurchasePage';
-import WarehousePage from './pages/WarehousePage';
-import ClientsPage from './pages/ClientsPage';
-import DocumentsPage from './pages/DocumentsPage';
+// Module pages — code-split so each workspace only downloads what it opens.
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const CRMPage = lazy(() => import('./pages/CRMPage'));
+const SalesPage = lazy(() => import('./pages/SalesPage'));
+const InventoryPage = lazy(() => import('./pages/InventoryPage'));
+const AccountingPage = lazy(() => import('./pages/AccountingPage'));
+const HRPage = lazy(() => import('./pages/HRPage'));
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
+const ManufacturingPage = lazy(() => import('./pages/ManufacturingPage'));
+const HelpdeskPage = lazy(() => import('./pages/HelpdeskPage'));
+const MarketingPage = lazy(() => import('./pages/MarketingPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 const PAGE_BY_MODULE: Record<string, React.ReactElement> = {
   crm: <CRMPage />,
@@ -53,23 +40,6 @@ const PAGE_BY_MODULE: Record<string, React.ReactElement> = {
   manufacturing: <ManufacturingPage />,
   helpdesk: <HelpdeskPage />,
   marketing: <MarketingPage />,
-  
-  pos: <POSPage />,
-  kitchen: <KitchenPage />,
-  tables: <TablesPage />,
-  menu: <MenuPage />,
-  delivery: <DeliveryPage />,
-  reservations: <ReservationsPage />,
-  
-  bom: <BOMPage />,
-  mrp: <MRPPage />,
-  factory: <FactoryPage />,
-  machines: <MachinesPage />,
-  purchase: <PurchasePage />,
-  warehouse: <WarehousePage />,
-  
-  clients: <ClientsPage />,
-  documents: <DocumentsPage />,
 };
 
 // ── Full-screen states ───────────────────────────────────────────────────────
@@ -77,8 +47,8 @@ const PAGE_BY_MODULE: Record<string, React.ReactElement> = {
 function SplashScreen({ subtitle }: { subtitle: string }) {
   return (
     <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', color: 'var(--text-primary)', flexDirection: 'column', gap: 16 }}>
-      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--grad-ai)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', boxShadow: 'var(--shadow-ai)', animation: 'spin 1.5s linear infinite' }}>✨</div>
-      <div style={{ fontFamily: 'Outfit', fontWeight: 700, fontSize: '1.1rem' }}>Loading Erpixa…</div>
+      <div className="spin" style={{ width: 30, height: 30, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--accent)' }} />
+      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.05rem' }}>Loading Erpixa…</div>
       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{subtitle}</div>
     </div>
   );
@@ -89,7 +59,7 @@ function SetupRequiredScreen() {
   return (
     <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', padding: 24 }}>
       <div className="card" style={{ maxWidth: 560, padding: 32 }}>
-        <div style={{ fontSize: '2rem', marginBottom: 12 }} aria-hidden="true">🔌</div>
+        <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}><Icon name="plug" size={22} /></div>
         <h1 style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: '1.4rem', color: 'var(--text-primary)', margin: 0 }}>
           Connect Erpixa to Supabase
         </h1>
@@ -126,7 +96,7 @@ function DbErrorBanner({ error, onRetry }: { error: string; onRetry: () => void 
       padding: '10px 20px', display: 'flex', alignItems: 'center',
       gap: 12, fontFamily: 'Inter, sans-serif', fontSize: '0.8rem', color: '#FEE2E2',
     }}>
-      <span style={{ fontSize: '1rem' }} aria-hidden="true">⚠️</span>
+      <Icon name="alert" size={16} />
       <span style={{ flex: 1, lineHeight: 1.5 }}>
         <strong>Database error:</strong> {error}
         {isSchemaError && (
@@ -136,12 +106,21 @@ function DbErrorBanner({ error, onRetry }: { error: string; onRetry: () => void 
       <button
         onClick={onRetry}
         style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, color: '#fff', padding: '4px 12px', cursor: 'pointer', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
-      >↻ Retry</button>
+      >Retry</button>
       <button
         onClick={() => setOpen(false)}
         aria-label="Dismiss"
-        style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0 4px' }}
-      >✕</button>
+        style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', display: 'flex', padding: '0 4px' }}
+      ><Icon name="close" size={16} /></button>
+    </div>
+  );
+}
+
+/** Lightweight fallback while a lazily-loaded module page downloads. */
+function PageLoading() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-muted)' }}>
+      <div className="spin" style={{ width: 28, height: 28, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--accent)' }} />
     </div>
   );
 }
@@ -158,15 +137,17 @@ function AppLayout() {
       <div className="main-content">
         <TopNav />
         <main className="page-body">
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            {MODULES.filter((m) => m.id !== 'dashboard' && enabled.has(m.id)).map((m) => (
-              <Route key={m.id} path={m.path} element={PAGE_BY_MODULE[m.id]} />
-            ))}
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={<PageLoading />}>
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              {MODULES.filter((m) => m.id !== 'dashboard' && enabled.has(m.id)).map((m) => (
+                <Route key={m.id} path={m.path} element={PAGE_BY_MODULE[m.id]} />
+              ))}
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/admin" element={<AdminPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
       <AIPanel />
@@ -195,6 +176,11 @@ function AppShell() {
   const resetData = useDataStore((s) => s.reset);
   const dataLoading = useDataStore((s) => s.loading);
   const dataError = useDataStore((s) => s.error);
+  const theme = useUIStore((s) => s.theme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     initialize();

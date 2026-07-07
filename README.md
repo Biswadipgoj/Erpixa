@@ -1,32 +1,49 @@
-# React + TypeScript + Vite
+# Erpixa
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A multi-tenant ERP for small and mid-sized businesses. One workspace covers CRM,
+sales, inventory, accounting, HR, projects, manufacturing, helpdesk, and
+marketing — and onboarding turns on only the modules that fit the business type,
+so a consultancy and a manufacturer each get a workspace shaped for them.
 
-Currently, two official plugins are available:
+Every business record belongs to exactly one organization and is isolated by
+Postgres row-level security, so no tenant can ever read another's data.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Stack
 
-## React Compiler
+- **React 19 + TypeScript + Vite**
+- **Zustand** for state
+- **Supabase** (Postgres, Auth, RLS) for the backend — no custom server
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Getting started
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+cp .env.example .env      # then fill in your Supabase URL + anon key
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+You need a Supabase project with the schema applied. Full instructions —
+including database setup, Google sign-in, and deployment — are in
+[`SETUP_GUIDE.md`](SETUP_GUIDE.md).
+
+## Scripts
+
+| Command | Description |
+|---|---|
+| `npm run dev` | Start the dev server |
+| `npm run build` | Type-check and build for production |
+| `npm run preview` | Preview the production build |
+| `npm run lint` | Run oxlint |
+
+## Project layout
+
+```
+src/
+  components/   Layout (sidebar, top nav) and shared UI (Icon, RecordModal, crud, Toast)
+  lib/          modules, business types, CRM stages, record field defs, Supabase client
+  pages/        one page per module + auth/onboarding/settings/admin
+  store/        Zustand stores — auth/org, currency, UI, notifications, and business data
+  types.ts      shared domain models
+supabase/
+  schema.sql    tables, indexes, RLS policies, and the create_organization function
+```
