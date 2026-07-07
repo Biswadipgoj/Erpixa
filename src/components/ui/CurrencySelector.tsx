@@ -151,7 +151,7 @@ export default function CurrencySelector() {
 
           {/* Footer */}
           <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', background: 'var(--bg-subtle)', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-            Rates updated daily · 20 currencies available
+            Indicative conversion rates · 20 currencies
           </div>
         </div>
       )}

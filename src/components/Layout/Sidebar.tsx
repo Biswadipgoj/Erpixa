@@ -2,7 +2,8 @@ import { useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useUIStore, useAuthStore } from '../../store';
 import { useDataStore } from '../../store/dataStore';
-import { MODULES, SETTINGS_GRADIENT, type ModuleDef } from '../../lib/modules';
+import { MODULES, type ModuleDef } from '../../lib/modules';
+import Icon from '../ui/Icon';
 
 /** Modules visible for the current organization (dashboard is always first). */
 function useEnabledModules(): ModuleDef[] {
@@ -41,7 +42,7 @@ export function Sidebar() {
         title={sidebarCollapsed ? m.label : undefined}
         aria-current={isActive ? 'page' : undefined}
       >
-        <span className="nav-icon" aria-hidden="true">{m.icon}</span>
+        <span className="nav-icon"><Icon name={m.icon} size={18} /></span>
         {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left' }}>{m.label}</span>}
         {!sidebarCollapsed && badge && <span className="nav-badge">{badge}</span>}
       </button>
@@ -67,7 +68,7 @@ export function Sidebar() {
                 style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
               />
             ) : (
-              <span style={{ fontSize: '1.1rem' }}>✨</span>
+              <span>E</span>
             )}
           </div>
           {!sidebarCollapsed && (
@@ -99,7 +100,7 @@ export function Sidebar() {
             title={sidebarCollapsed ? 'Settings' : undefined}
             aria-current={location.pathname === '/settings' ? 'page' : undefined}
           >
-            <span className="nav-icon" aria-hidden="true">⚙️</span>
+            <span className="nav-icon"><Icon name="settings" size={18} /></span>
             {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left' }}>Settings</span>}
           </button>
 
@@ -111,8 +112,8 @@ export function Sidebar() {
               title={sidebarCollapsed ? 'Admin Panel' : undefined}
               aria-current={location.pathname === '/admin' ? 'page' : undefined}
             >
-              <span className="nav-icon" aria-hidden="true">🛡️</span>
-              {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left', color: '#C4B5FD' }}>Admin Panel</span>}
+              <span className="nav-icon"><Icon name="admin" size={18} /></span>
+              {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left' }}>Admin Panel</span>}
             </button>
           )}
 
@@ -194,9 +195,9 @@ export function AppSwitcher() {
           <button
             type="button"
             onClick={() => setAppSwitcherOpen(false)}
-            style={{ background: 'var(--bg-subtle)', border: '1.5px solid var(--border)', borderRadius: 8, padding: '6px 12px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }}
+            className="btn btn-sm btn-secondary"
           >
-            ✕ Close
+            <Icon name="close" size={15} /> Close
           </button>
         </div>
         <div className="app-grid">
@@ -206,18 +207,13 @@ export function AppSwitcher() {
               type="button"
               className={`app-item${location.pathname === m.path ? ' active-app' : ''}`}
               onClick={() => go(m.path, m.label)}
-              style={{ borderColor: location.pathname === m.path ? m.color + '44' : undefined }}
             >
-              <div className="app-item-icon" style={{ background: m.gradient }} aria-hidden="true">
-                <span style={{ filter: 'brightness(2)' }}>{m.icon}</span>
-              </div>
+              <div className="app-item-icon"><Icon name={m.icon} size={22} /></div>
               <div className="app-item-name">{m.label}</div>
             </button>
           ))}
-          <button type="button" className="app-item" onClick={() => go('/settings', 'Settings')}>
-            <div className="app-item-icon" style={{ background: SETTINGS_GRADIENT }} aria-hidden="true">
-              <span style={{ filter: 'brightness(2)' }}>⚙️</span>
-            </div>
+          <button type="button" className={`app-item${location.pathname === '/settings' ? ' active-app' : ''}`} onClick={() => go('/settings', 'Settings')}>
+            <div className="app-item-icon"><Icon name="settings" size={22} /></div>
             <div className="app-item-name">Settings</div>
           </button>
         </div>

@@ -33,7 +33,6 @@ export default function ResetPasswordPage() {
 
   return (
     <div className="onboarding-page">
-      <div className="login-bg-blob" style={{ top: -120, left: -100 }} aria-hidden="true" />
       <div className="onboarding-card" style={{ maxWidth: 440 }}>
         <div className="onboarding-header">
           <div style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: '1.3rem', color: 'var(--text-primary)' }}>

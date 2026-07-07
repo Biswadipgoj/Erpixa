@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import Icon from './Icon';
 
 export interface FieldDef {
   name: string;
   label: string;
   type: 'text' | 'number' | 'date' | 'select' | 'email' | 'tel';
   required?: boolean;
-  options?: string[];
+  options?: { value: string; label: string }[] | string[];
   placeholder?: string;
   min?: number;
   defaultValue?: string;
@@ -14,16 +15,40 @@ export interface FieldDef {
 interface RecordModalProps {
   title: string;
   submitLabel?: string;
-  gradient?: string;
   fields: FieldDef[];
+  /** Prefills the form for editing an existing record. */
+  initial?: Record<string, string | number | null | undefined>;
   onSubmit: (values: Record<string, string | number>) => Promise<void>;
   onClose: () => void;
 }
 
-/** Generic "create record" modal driven by a field definition list. */
-export default function RecordModal({ title, submitLabel = 'Create', gradient, fields, onSubmit, onClose }: RecordModalProps) {
+const asOptions = (opts: FieldDef['options']) =>
+  (opts ?? []).map((o) => (typeof o === 'string' ? { value: o, label: o } : o));
+
+/** Turns a raw Supabase/network error into a human-friendly sentence. */
+function friendlyError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  const lower = message.toLowerCase();
+  if (lower.includes('duplicate') || lower.includes('23505') || lower.includes('already exists')) {
+    return 'A record with those details already exists.';
+  }
+  if (lower.includes('row-level security') || lower.includes('permission') || lower.includes('42501')) {
+    return 'You don’t have permission to do this.';
+  }
+  if (lower.includes('failed to fetch') || lower.includes('network')) {
+    return 'We couldn’t reach the server. Check your internet connection and try again.';
+  }
+  return message || 'Something unexpected happened. Please try again.';
+}
+
+/** Generic create/edit modal driven by a field definition list. */
+export default function RecordModal({ title, submitLabel = 'Save', fields, initial, onSubmit, onClose }: RecordModalProps) {
   const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(fields.map((f) => [f.name, f.defaultValue ?? (f.type === 'select' ? f.options?.[0] ?? '' : '')]))
+    Object.fromEntries(fields.map((f) => {
+      const seed = initial?.[f.name];
+      if (seed !== undefined && seed !== null) return [f.name, String(seed)];
+      return [f.name, f.defaultValue ?? (f.type === 'select' ? asOptions(f.options)[0]?.value ?? '' : '')];
+    }))
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -69,28 +94,19 @@ export default function RecordModal({ title, submitLabel = 'Create', gradient, f
       await onSubmit(parsed);
       onClose();
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+      setSubmitError(friendlyError(err));
       setSubmitting(false);
     }
   };
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <div
-        className="modal modal-sm"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header" style={gradient ? ({ '--hero-grad': gradient } as React.CSSProperties) : undefined}>
+      <div className="modal modal-sm" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
           <h3>{title}</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close dialog"
-            style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          >×</button>
+          <button type="button" onClick={onClose} aria-label="Close dialog" className="topnav-icon-btn">
+            <Icon name="close" size={18} />
+          </button>
         </div>
         <form onSubmit={handleSubmit} noValidate>
           <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -107,7 +123,7 @@ export default function RecordModal({ title, submitLabel = 'Create', gradient, f
                     value={values[f.name]}
                     onChange={(e) => setValue(f.name, e.target.value)}
                   >
-                    {f.options?.map((o) => <option key={o} value={o}>{o}</option>)}
+                    {asOptions(f.options).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 ) : (
                   <input
@@ -128,7 +144,7 @@ export default function RecordModal({ title, submitLabel = 'Create', gradient, f
               </div>
             ))}
             {submitError && (
-              <div role="alert" style={{ padding: '10px 14px', background: 'var(--danger-bg)', border: `1px solid var(--danger-border)`, borderRadius: 10, color: 'var(--danger)', fontSize: '0.875rem' }}>
+              <div role="alert" style={{ padding: '10px 14px', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, color: 'var(--danger)', fontSize: '0.85rem' }}>
                 {submitError}
               </div>
             )}
