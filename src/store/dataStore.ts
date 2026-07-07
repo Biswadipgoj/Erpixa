@@ -284,6 +284,10 @@ function requireOrg(): { orgId: string; userId: string } {
   return { orgId: organization.id, userId: supabaseUser.id };
 }
 
+// Bumped on every fetch and every reset(); a fetch whose generation is stale by
+// the time it resolves (sign-out, org switch) discards its results.
+let fetchGeneration = 0;
+
 export const useDataStore = create<DataState>((set, get) => ({
   ...EMPTY_DATA,
   loading: true,
@@ -299,6 +303,7 @@ export const useDataStore = create<DataState>((set, get) => ({
     }
 
     set({ loading: true, error: null });
+    const generation = ++fetchGeneration;
 
     const scoped = (table: TableName) =>
       supabase.from(table).select('*')
@@ -313,6 +318,9 @@ export const useDataStore = create<DataState>((set, get) => ({
         'customers', 'suppliers', 'campaigns',
       ];
       const results = await Promise.all(tables.map((t) => scoped(t)));
+
+      // Discard if a sign-out / org switch superseded this fetch while it ran.
+      if (generation !== fetchGeneration) return;
 
       const failed = results
         .map((r, i) => (r.error ? `${tables[i]}: ${r.error.message}` : null))
@@ -408,7 +416,7 @@ export const useDataStore = create<DataState>((set, get) => ({
     if (table === 'projects' || table === 'project_tasks') relinkProjects(set, get);
   },
 
-  reset: () => set({ ...EMPTY_DATA, loading: true, error: null }),
+  reset: () => { fetchGeneration++; set({ ...EMPTY_DATA, loading: true, error: null }); },
 }));
 
 /** Recomputes project task counts + task display names after any project/task mutation. */

@@ -80,6 +80,10 @@ async function applySession(
     supabaseUser: session.user,
     user: buildProfile(session.user, profile),
     loading: false,
+    // Clear any previous tenant up front so racing consumers (notifications,
+    // in-flight fetches) can never read a stale org during the membership gap.
+    organization: null,
+    orgRole: null,
     orgLoading: true,
   });
   const membership = await fetchMembership(session.user.id);
@@ -97,6 +101,8 @@ async function applySession(
 // Guards against duplicate onAuthStateChange subscriptions
 // (React StrictMode mounts effects twice in development).
 let authListenerBound = false;
+// De-dupes the bootstrap path so StrictMode's double effect can't double-fetch.
+let initPromise: Promise<void> | null = null;
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
@@ -114,6 +120,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ loading: false });
       return;
     }
+    if (initPromise) return initPromise;
+    initPromise = (async () => {
     set({ loading: true });
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -155,6 +163,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch {
       set({ loading: false });
     }
+    })();
+    return initPromise;
   },
 
   signInWithEmail: async (email, password) => {
@@ -194,9 +204,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   resetPassword: async (email) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      // /auth/callback handles the code exchange; the PASSWORD_RECOVERY event
-      // then routes the user to the reset-password screen.
-      redirectTo: `${window.location.origin}/auth/callback`,
+      // The ?type=recovery marker lets /auth/callback flag passwordRecovery after
+      // the code exchange, so the user lands on the reset-password screen instead
+      // of being dropped straight into the workspace.
+      redirectTo: `${window.location.origin}/auth/callback?type=recovery`,
     });
     if (error) return { error: error.message };
     return { message: 'If an account exists for that email, a reset link is on its way.' };
@@ -242,6 +253,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (fetchError) return { error: fetchError.message };
     set({ organization: org as Organization, orgRole: 'owner' });
     useCurrencyStore.getState().setCurrencyByCode((org as Organization).currency);
+    useNotificationStore.getState().fetchNotifications();
     return {};
   },
 
@@ -357,15 +369,23 @@ interface UIState {
   aiPanelOpen: boolean;
   currentModule: string;
   toasts: Toast[];
+  theme: 'aurora' | 'midnight' | 'enterprise';
   toggleSidebar: () => void;
   setMobileNavOpen: (v: boolean) => void;
   setAppSwitcherOpen: (v: boolean) => void;
   setNotifPanelOpen: (v: boolean) => void;
   setAIPanelOpen: (v: boolean) => void;
   setCurrentModule: (m: string) => void;
+  setTheme: (t: 'aurora' | 'midnight' | 'enterprise') => void;
   addToast: (toast: Omit<Toast, 'id'>) => void;
   removeToast: (id: string) => void;
 }
+
+const getStoredTheme = (): 'aurora' | 'midnight' | 'enterprise' => {
+  const t = localStorage.getItem('erpixa-theme');
+  if (t === 'midnight' || t === 'enterprise') return t;
+  return 'aurora';
+};
 
 let toastId = 0;
 export const useUIStore = create<UIState>((set) => ({
@@ -376,12 +396,18 @@ export const useUIStore = create<UIState>((set) => ({
   aiPanelOpen: false,
   currentModule: 'Dashboard',
   toasts: [],
+  theme: getStoredTheme(),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setMobileNavOpen: (v) => set({ mobileNavOpen: v }),
   setAppSwitcherOpen: (v) => set({ appSwitcherOpen: v, notifPanelOpen: false, aiPanelOpen: false }),
   setNotifPanelOpen: (v) => set({ notifPanelOpen: v, aiPanelOpen: false }),
   setAIPanelOpen: (v) => set({ aiPanelOpen: v, notifPanelOpen: false }),
   setCurrentModule: (m) => set({ currentModule: m }),
+  setTheme: (t) => {
+    localStorage.setItem('erpixa-theme', t);
+    set({ theme: t });
+    document.documentElement.setAttribute('data-theme', t);
+  },
   addToast: (toast) => {
     const id = String(++toastId);
     set((s) => ({ toasts: [...s.toasts, { ...toast, id }] }));
