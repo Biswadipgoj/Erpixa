@@ -1,10 +1,9 @@
 import { create } from 'zustand';
 import { supabase, isSupabaseConfigured, type UserProfile } from '../lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
-import { notifications as seedNotifications } from '../data/mockData';
-import type { AppNotification } from '../types';
+import type { AppNotification, Organization, OrganizationInput, OrgRole } from '../types';
 
-// ── Auth Store ──────────────────────────────────────────────────
+// ── Auth + Organization Store ───────────────────────────────────
 interface AuthState {
   isAuthenticated: boolean;
   user: UserProfile | null;
@@ -13,13 +12,22 @@ interface AuthState {
   loading: boolean;
   /** Set when the user arrives via a password-recovery email link. */
   passwordRecovery: boolean;
+  /** The user's organization (tenant). Null until onboarding completes. */
+  organization: Organization | null;
+  /** The user's role within their organization. */
+  orgRole: OrgRole | null;
+  /** True while the membership lookup after sign-in is still running. */
+  orgLoading: boolean;
   initialize: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<{ error?: string }>;
   signUpWithEmail: (email: string, password: string, fullName: string) => Promise<{ error?: string; message?: string }>;
   signInWithGoogle: () => Promise<{ error?: string }>;
   resetPassword: (email: string) => Promise<{ error?: string; message?: string }>;
   updatePassword: (password: string) => Promise<{ error?: string }>;
-  updateProfile: (fields: Partial<Pick<UserProfile, 'full_name' | 'company'>>) => Promise<{ error?: string }>;
+  updateProfile: (fields: Partial<Pick<UserProfile, 'full_name' | 'avatar_url'>>) => Promise<{ error?: string }>;
+  createOrganization: (input: OrganizationInput) => Promise<{ error?: string }>;
+  updateOrganization: (fields: Partial<OrganizationInput>) => Promise<{ error?: string }>;
+  refreshOrganization: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -28,8 +36,6 @@ function buildProfile(user: User, dbProfile?: Partial<UserProfile> | null): User
     id: user.id,
     email: user.email || '',
     full_name: dbProfile?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
-    role: dbProfile?.role || 'user',
-    company: dbProfile?.company || 'Erpixa',
     avatar_url: dbProfile?.avatar_url || user.user_metadata?.avatar_url,
     status: dbProfile?.status || 'active',
     created_at: dbProfile?.created_at || user.created_at,
@@ -42,6 +48,20 @@ async function fetchProfile(userId: string): Promise<Partial<UserProfile> | null
   return data;
 }
 
+/** Loads the user's organization membership; returns null when not onboarded yet. */
+async function fetchMembership(userId: string): Promise<{ organization: Organization; role: OrgRole } | null> {
+  const { data, error } = await supabase
+    .from('organization_members')
+    .select('role, organizations(*)')
+    .eq('user_id', userId)
+    .limit(1)
+    .maybeSingle();
+  if (error || !data?.organizations) return null;
+  const org = data.organizations as unknown as Organization;
+  if ((org as { deleted_at?: string | null }).deleted_at) return null;
+  return { organization: org, role: data.role as OrgRole };
+}
+
 /** Applies a session to the store; signs suspended accounts out immediately. */
 async function applySession(
   session: Session,
@@ -50,7 +70,7 @@ async function applySession(
   const profile = await fetchProfile(session.user.id);
   if (profile?.status === 'suspended') {
     await supabase.auth.signOut();
-    set({ isAuthenticated: false, user: null, session: null, supabaseUser: null, loading: false });
+    set({ isAuthenticated: false, user: null, session: null, supabaseUser: null, loading: false, organization: null, orgRole: null, orgLoading: false });
     useUIStore.getState().addToast({ message: 'This account has been suspended. Contact your administrator.', type: 'danger' });
     return;
   }
@@ -60,8 +80,18 @@ async function applySession(
     supabaseUser: session.user,
     user: buildProfile(session.user, profile),
     loading: false,
+    orgLoading: true,
   });
-  autoDetectCurrency();
+  const membership = await fetchMembership(session.user.id);
+  set({
+    organization: membership?.organization ?? null,
+    orgRole: membership?.role ?? null,
+    orgLoading: false,
+  });
+  if (membership) {
+    useCurrencyStore.getState().setCurrencyByCode(membership.organization.currency);
+    useNotificationStore.getState().fetchNotifications();
+  }
 }
 
 // Guards against duplicate onAuthStateChange subscriptions
@@ -75,6 +105,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   supabaseUser: null,
   loading: true,
   passwordRecovery: false,
+  organization: null,
+  orgRole: null,
+  orgLoading: false,
 
   initialize: async () => {
     if (!isSupabaseConfigured) {
@@ -91,20 +124,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       if (!authListenerBound) {
         authListenerBound = true;
-        supabase.auth.onAuthStateChange((event, session) => {
-          console.log('[Auth] onAuthStateChange:', event, session?.user?.email ?? null);
+        supabase.auth.onAuthStateChange((event, newSession) => {
           if (event === 'PASSWORD_RECOVERY') {
             set({ passwordRecovery: true });
           }
           if (event === 'SIGNED_OUT') {
-            set({ isAuthenticated: false, user: null, session: null, supabaseUser: null, loading: false });
+            set({ isAuthenticated: false, user: null, session: null, supabaseUser: null, loading: false, organization: null, orgRole: null, orgLoading: false });
             return;
           }
-          if (session?.user) {
+          if (event === 'TOKEN_REFRESHED' && newSession) {
+            // Session token rotated — keep the session fresh without refetching
+            // profile and membership.
+            set({ session: newSession, supabaseUser: newSession.user });
+            return;
+          }
+          if (newSession?.user) {
+            const current = get();
+            // Ignore no-op events for the already-applied user (e.g. focus refetch)
+            if (current.isAuthenticated && current.supabaseUser?.id === newSession.user.id) {
+              set({ session: newSession });
+              return;
+            }
             // Defer async work out of the auth callback per supabase-js guidance.
-            setTimeout(() => { applySession(session, set); }, 0);
+            setTimeout(() => { applySession(newSession, set); }, 0);
           } else {
-            set({ isAuthenticated: false, user: null, session: null, supabaseUser: null, loading: false });
+            set({ isAuthenticated: false, user: null, session: null, supabaseUser: null, loading: false, organization: null, orgRole: null, orgLoading: false });
           }
         });
       }
@@ -114,28 +158,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signInWithEmail: async (email, password) => {
-    if (!isSupabaseConfigured) {
-      // Demo Mode — no backend; any credentials open a local sandbox session.
-      if (email && password) {
-        const demoUser: UserProfile = {
-          id: 'demo', email, full_name: 'Demo Admin', role: 'admin',
-          company: 'Erpixa', status: 'active', created_at: new Date().toISOString(),
-        };
-        set({ isAuthenticated: true, user: demoUser, loading: false });
-        autoDetectCurrency();
-        return {};
-      }
-      return { error: 'Enter any email and password to explore the demo.' };
-    }
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
     return {};
   },
 
   signUpWithEmail: async (email, password, fullName) => {
-    if (!isSupabaseConfigured) {
-      return { error: 'Sign-up requires a connected backend. Use any credentials on the sign-in tab to explore the demo.' };
-    }
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -154,27 +182,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signInWithGoogle: async () => {
-    if (!isSupabaseConfigured) return { error: 'Google sign-in requires a connected backend.' };
     // redirectTo must point to /auth/callback so the OAuth code lands on the
-    // dedicated handler that calls exchangeCodeForSession(). Using window.location.origin
-    // (i.e. the root '/') causes a race with the LoginPage render and breaks PKCE exchange.
-    const callbackUrl = `${window.location.origin}/auth/callback`;
-    console.log('[Auth] Google OAuth redirectTo:', callbackUrl);
+    // dedicated handler that calls exchangeCodeForSession().
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: callbackUrl },
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     if (error) return { error: error.message };
     return {};
   },
 
   resetPassword: async (email) => {
-    if (!isSupabaseConfigured) {
-      return { error: 'Password reset requires a connected backend.' };
-    }
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      // /auth/callback handles the code exchange; it reads the type=recovery param
-      // and the auth store's PASSWORD_RECOVERY event updates state accordingly.
+      // /auth/callback handles the code exchange; the PASSWORD_RECOVERY event
+      // then routes the user to the reset-password screen.
       redirectTo: `${window.location.origin}/auth/callback`,
     });
     if (error) return { error: error.message };
@@ -182,9 +203,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   updatePassword: async (password) => {
-    if (!isSupabaseConfigured) {
-      return { error: 'Password changes require a connected backend.' };
-    }
     const { error } = await supabase.auth.updateUser({ password });
     if (error) return { error: error.message };
     set({ passwordRecovery: false });
@@ -194,17 +212,64 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   updateProfile: async (fields) => {
     const current = get().user;
     if (!current) return { error: 'Not signed in.' };
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from('profiles').update(fields).eq('id', current.id);
-      if (error) return { error: error.message };
-    }
+    const { error } = await supabase.from('profiles').update(fields).eq('id', current.id);
+    if (error) return { error: error.message };
     set({ user: { ...current, ...fields } });
     return {};
   },
 
+  createOrganization: async (input) => {
+    const { data, error } = await supabase.rpc('create_organization', {
+      org_name: input.name,
+      org_business_type: input.business_type,
+      org_industry: input.industry,
+      org_country: input.country,
+      org_currency: input.currency,
+      org_timezone: input.timezone,
+      org_fiscal_start: input.fiscal_year_start,
+      org_business_size: input.business_size,
+      org_tax_scheme: input.tax_scheme,
+      org_tax_id: input.tax_id,
+      org_logo_url: input.logo_url,
+      org_address: input.address,
+      org_email: input.business_email,
+      org_phone: input.phone,
+      org_modules: input.enabled_modules,
+    });
+    if (error) return { error: error.message };
+    const { data: org, error: fetchError } = await supabase
+      .from('organizations').select('*').eq('id', data as string).single();
+    if (fetchError) return { error: fetchError.message };
+    set({ organization: org as Organization, orgRole: 'owner' });
+    useCurrencyStore.getState().setCurrencyByCode((org as Organization).currency);
+    return {};
+  },
+
+  updateOrganization: async (fields) => {
+    const org = get().organization;
+    if (!org) return { error: 'No organization loaded.' };
+    const { data, error } = await supabase
+      .from('organizations').update(fields).eq('id', org.id).select().single();
+    if (error) return { error: error.message };
+    set({ organization: data as Organization });
+    if (fields.currency) useCurrencyStore.getState().setCurrencyByCode(fields.currency);
+    return {};
+  },
+
+  refreshOrganization: async () => {
+    const userId = get().supabaseUser?.id;
+    if (!userId) return;
+    const membership = await fetchMembership(userId);
+    set({ organization: membership?.organization ?? null, orgRole: membership?.role ?? null });
+  },
+
   signOut: async () => {
-    if (isSupabaseConfigured) await supabase.auth.signOut();
-    set({ isAuthenticated: false, user: null, session: null, supabaseUser: null, passwordRecovery: false });
+    await supabase.auth.signOut();
+    set({
+      isAuthenticated: false, user: null, session: null, supabaseUser: null,
+      passwordRecovery: false, organization: null, orgRole: null, orgLoading: false,
+    });
+    useNotificationStore.setState({ items: [] });
   },
 }));
 
@@ -240,30 +305,21 @@ export const CURRENCIES: Currency[] = [
   { code: 'ZAR', name: 'South African Rand', symbol: 'R',   rate: 18.63,   flag: '🇿🇦' },
 ];
 
-const CURRENCY_STORAGE_KEY = 'erpixa.currency';
-
-function loadSavedCurrency(): Currency {
-  try {
-    const code = localStorage.getItem(CURRENCY_STORAGE_KEY);
-    const saved = CURRENCIES.find((c) => c.code === code);
-    if (saved) return saved;
-  } catch { /* storage unavailable (private mode) — fall through */ }
-  return CURRENCIES[0];
-}
-
 interface CurrencyState {
   currency: Currency;
   setCurrency: (c: Currency) => void;
+  setCurrencyByCode: (code: string) => void;
   convert: (usdAmount: number) => number;
   format: (usdAmount: number, compact?: boolean) => string;
   formatMoney: (usdAmount: number, compact?: boolean) => string;
 }
 
 export const useCurrencyStore = create<CurrencyState>((set, get) => ({
-  currency: loadSavedCurrency(),
-  setCurrency: (c) => {
-    set({ currency: c });
-    try { localStorage.setItem(CURRENCY_STORAGE_KEY, c.code); } catch { /* ignore */ }
+  currency: CURRENCIES[0],
+  setCurrency: (c) => set({ currency: c }),
+  setCurrencyByCode: (code) => {
+    const found = CURRENCIES.find((c) => c.code === code);
+    if (found) set({ currency: found });
   },
   convert: (usdAmount) => usdAmount * get().currency.rate,
   format: (usdAmount, compact = false) => {
@@ -285,18 +341,6 @@ export const useCurrencyStore = create<CurrencyState>((set, get) => ({
   },
   formatMoney: (usdAmount, compact = false) => get().format(usdAmount, compact),
 }));
-
-/** Defaults the currency to INR for users in an Indian timezone (unless they chose one). */
-function autoDetectCurrency() {
-  try {
-    if (localStorage.getItem(CURRENCY_STORAGE_KEY)) return;
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz === 'Asia/Kolkata' || tz === 'Asia/Calcutta') {
-      const inr = CURRENCIES.find((c) => c.code === 'INR');
-      if (inr) useCurrencyStore.setState({ currency: inr });
-    }
-  } catch { /* timezone unavailable — keep default */ }
-}
 
 // ── UI Store ────────────────────────────────────────────────────
 export interface Toast {
@@ -346,15 +390,87 @@ export const useUIStore = create<UIState>((set) => ({
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
 
-// ── Notification Store ──────────────────────────────────────────
+// ── Notification Store (DB-backed, org-scoped) ──────────────────
 interface NotificationState {
   items: AppNotification[];
-  markAllRead: () => void;
-  markRead: (id: string) => void;
+  loading: boolean;
+  fetchNotifications: () => Promise<void>;
+  markAllRead: () => Promise<void>;
+  markRead: (id: string) => Promise<void>;
 }
 
-export const useNotificationStore = create<NotificationState>((set) => ({
-  items: seedNotifications,
-  markAllRead: () => set((s) => ({ items: s.items.map((n) => ({ ...n, unread: false })) })),
-  markRead: (id) => set((s) => ({ items: s.items.map((n) => (n.id === id ? { ...n, unread: false } : n)) })),
+function timeAgo(iso: string): string {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? 'yesterday' : `${days}d ago`;
+}
+
+interface NotificationRow {
+  id: string;
+  type: string;
+  text: string;
+  unread: boolean;
+  created_at: string;
+}
+
+export const useNotificationStore = create<NotificationState>((set, get) => ({
+  items: [],
+  loading: false,
+
+  fetchNotifications: async () => {
+    const org = useAuthStore.getState().organization;
+    if (!org) return;
+    set({ loading: true });
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('id, type, text, unread, created_at')
+      .eq('organization_id', org.id)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (error) {
+      set({ loading: false });
+      return;
+    }
+    set({
+      items: ((data ?? []) as NotificationRow[]).map((n) => ({
+        id: n.id, type: n.type, text: n.text, unread: n.unread, time: timeAgo(n.created_at),
+      })),
+      loading: false,
+    });
+  },
+
+  markAllRead: async () => {
+    const org = useAuthStore.getState().organization;
+    if (!org) return;
+    set((s) => ({ items: s.items.map((n) => ({ ...n, unread: false })) }));
+    await supabase.from('notifications').update({ unread: false })
+      .eq('organization_id', org.id).eq('unread', true);
+  },
+
+  markRead: async (id) => {
+    set((s) => ({ items: s.items.map((n) => (n.id === id ? { ...n, unread: false } : n)) }));
+    await supabase.from('notifications').update({ unread: false }).eq('id', id);
+  },
 }));
+
+/** Fire-and-forget helper used by the data store to log org activity. */
+export async function pushNotification(type: string, text: string): Promise<void> {
+  const org = useAuthStore.getState().organization;
+  if (!org) return;
+  const { data } = await supabase
+    .from('notifications')
+    .insert({ organization_id: org.id, type, text })
+    .select('id, type, text, unread, created_at')
+    .single();
+  if (data) {
+    const row = data as NotificationRow;
+    useNotificationStore.setState((s) => ({
+      items: [{ id: row.id, type: row.type, text: row.text, unread: row.unread, time: timeAgo(row.created_at) }, ...s.items].slice(0, 30),
+    }));
+  }
+}

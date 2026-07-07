@@ -1,4 +1,75 @@
-// Shared domain types used by the data store, mock data, and pages.
+// Shared domain types used by the stores and pages.
+// Database rows are snake_case; the data store normalizes them into these
+// camelCase UI models (see store/dataStore.ts).
+
+export type OrgRole = 'owner' | 'admin' | 'manager' | 'member';
+
+export interface Organization {
+  id: string;
+  name: string;
+  business_type: string;
+  industry: string;
+  country: string;
+  currency: string;
+  timezone: string;
+  fiscal_year_start: number;
+  business_size: string;
+  tax_scheme: 'none' | 'gst' | 'vat';
+  tax_id: string;
+  logo_url?: string | null;
+  address: string;
+  business_email: string;
+  phone: string;
+  enabled_modules: string[];
+  created_at: string;
+}
+
+export interface OrganizationInput {
+  name: string;
+  business_type: string;
+  industry: string;
+  country: string;
+  currency: string;
+  timezone: string;
+  fiscal_year_start: number;
+  business_size: string;
+  tax_scheme: 'none' | 'gst' | 'vat';
+  tax_id: string;
+  logo_url: string | null;
+  address: string;
+  business_email: string;
+  phone: string;
+  enabled_modules: string[];
+}
+
+export interface OrgMember {
+  user_id: string;
+  role: OrgRole;
+  full_name: string;
+  email: string;
+  avatar_url?: string | null;
+  joined_at: string;
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  notes: string;
+  createdAt: string;
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  notes: string;
+  createdAt: string;
+}
 
 export interface Lead {
   id: string;
@@ -22,10 +93,11 @@ export interface CRMStage {
 
 export interface SalesOrder {
   id: string;
+  number: string;
   customer: string;
   date: string;
   total: number;
-  status: 'Draft' | 'Confirmed' | 'Invoiced' | 'Done' | string;
+  status: 'Draft' | 'Confirmed' | 'Invoiced' | 'Done' | 'Cancelled' | string;
   salesperson: string;
 }
 
@@ -33,18 +105,23 @@ export interface Product {
   id: string;
   name: string;
   category: string;
+  sku: string;
   qty: number;
+  reorderLevel: number;
   price: number;
-  status: 'In Stock' | 'Low Stock' | 'Out of Stock' | string;
+  cost: number;
+  /** Derived from qty vs reorderLevel — not stored in the database. */
+  status: 'In Stock' | 'Low Stock' | 'Out of Stock';
 }
 
 export interface Invoice {
   id: string;
+  number: string;
   customer: string;
   date: string;
   due: string;
   amount: number;
-  status: 'Draft' | 'Posted' | string;
+  status: 'Draft' | 'Posted' | 'Cancelled' | string;
   payment: 'Paid' | 'Unpaid' | 'Overdue' | string;
 }
 
@@ -55,9 +132,11 @@ export interface Employee {
   dept: string;
   email: string;
   phone: string;
-  status: 'Active' | 'On Leave' | string;
+  status: 'Active' | 'On Leave' | 'Terminated' | string;
   joinDate: string;
+  /** Derived from name — not stored in the database. */
   initials: string;
+  /** Derived from name — not stored in the database. */
   color: string;
 }
 
@@ -65,17 +144,20 @@ export interface Project {
   id: string;
   name: string;
   client: string;
-  status: 'Planning' | 'In Progress' | 'Completed' | string;
+  status: 'Planning' | 'In Progress' | 'On Hold' | 'Completed' | string;
   progress: number;
   dueDate: string;
   team: string[];
+  /** Derived counts from project_tasks — not stored in the database. */
   tasks: number;
   done: number;
 }
 
 export interface ProjectTask {
   id: string;
+  projectId: string | null;
   title: string;
+  /** Display name of the parent project, resolved by the data store. */
   project: string;
   stage: 'To Do' | 'In Progress' | 'Done' | string;
   assignee: string;
@@ -88,7 +170,7 @@ export interface ManufacturingOrder {
   product: string;
   qty: number;
   bom: string;
-  status: 'Planned' | 'In Progress' | 'Done' | string;
+  status: 'Planned' | 'In Progress' | 'Done' | 'Cancelled' | string;
   scheduled: string;
   workcenter: string;
 }
@@ -103,15 +185,21 @@ export interface Ticket {
   created: string;
 }
 
-export interface RevenuePoint {
-  month: string;
-  revenue: number;
-  target: number;
+export interface Campaign {
+  id: string;
+  name: string;
+  channel: 'Email' | 'Social' | 'Ads' | 'SMS' | 'Event' | 'Other' | string;
+  status: 'Draft' | 'Active' | 'Paused' | 'Completed' | string;
+  budget: number;
+  spent: number;
+  leadsGenerated: number;
+  startDate: string;
+  endDate: string;
 }
 
 export interface AppNotification {
   id: string;
-  type: 'lead' | 'invoice' | 'task' | 'ticket' | 'leave' | string;
+  type: 'lead' | 'invoice' | 'task' | 'ticket' | 'info' | string;
   text: string;
   time: string;
   unread: boolean;

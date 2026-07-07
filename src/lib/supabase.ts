@@ -6,12 +6,11 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undef
 const isPlaceholder = (value?: string) =>
   !value || value.includes('placeholder') || value.includes('YOUR_');
 
-/** True when real Supabase credentials are present; false runs the app in Demo Mode. */
+/**
+ * True when real Supabase credentials are present. When false the app renders
+ * a setup screen (App.tsx) — there is no demo mode and no mock data.
+ */
 export const isSupabaseConfigured = !isPlaceholder(supabaseUrl) && !isPlaceholder(supabaseAnonKey);
-
-if (!isSupabaseConfigured && import.meta.env.DEV) {
-  console.warn('Erpixa: Supabase not configured — running in Demo Mode. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env');
-}
 
 export const supabase = createClient(
   isSupabaseConfigured ? supabaseUrl! : 'https://placeholder.supabase.co',
@@ -30,15 +29,11 @@ export const supabase = createClient(
   }
 );
 
-export type UserRole = 'admin' | 'manager' | 'user';
-
 export interface UserProfile {
   id: string;
   email: string;
   full_name: string;
-  role: UserRole;
-  company: string;
-  avatar_url?: string;
+  avatar_url?: string | null;
   status: 'active' | 'suspended';
   created_at: string;
   last_sign_in?: string;

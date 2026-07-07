@@ -1,22 +1,32 @@
 -- ============================================================
--- Erpixa — Supabase Database Schema v2
+-- Erpixa — Supabase Database Schema v3 (multi-tenant SaaS)
 -- Run this in: Supabase Dashboard → SQL Editor → New Query
+--
+-- Design:
+--   * Every business row belongs to exactly one organization.
+--   * Row Level Security restricts all access to members of that
+--     organization — enforced in the database, not the client.
+--   * Soft deletes via deleted_at; the client filters them out and
+--     hard deletes are disallowed for business tables.
+--   * No seed data: new organizations start empty.
 -- ============================================================
 
--- ── 1. Profiles ─────────────────────────────────────────────────────────────
+-- ── 0. Extensions ────────────────────────────────────────────────────────────
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ── 1. Profiles (one per auth user, global — not org-scoped) ────────────────
 CREATE TABLE IF NOT EXISTS public.profiles (
-  id         UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
-  email      TEXT NOT NULL,
-  full_name  TEXT DEFAULT '',
-  role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'manager', 'user')),
-  company    TEXT DEFAULT 'Erpixa',
-  avatar_url TEXT,
-  status     TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
+  id           UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+  email        TEXT NOT NULL,
+  full_name    TEXT NOT NULL DEFAULT '',
+  avatar_url   TEXT,
+  status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_sign_in TIMESTAMPTZ
 );
 
--- Auto-create profile row when a new auth user is created (e.g. via Google OAuth)
+-- Auto-create profile row when a new auth user is created (email or OAuth)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -40,284 +50,449 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- ── 2. CRM Leads ────────────────────────────────────────────────────────────
+-- ── 2. Organizations (tenants) ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.organizations (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name              TEXT NOT NULL,
+  business_type     TEXT NOT NULL DEFAULT 'custom',
+  industry          TEXT NOT NULL DEFAULT '',
+  country           TEXT NOT NULL DEFAULT '',
+  currency          TEXT NOT NULL DEFAULT 'USD',
+  timezone          TEXT NOT NULL DEFAULT 'UTC',
+  fiscal_year_start INTEGER NOT NULL DEFAULT 1 CHECK (fiscal_year_start BETWEEN 1 AND 12),
+  business_size     TEXT NOT NULL DEFAULT '1-10',
+  tax_scheme        TEXT NOT NULL DEFAULT 'none' CHECK (tax_scheme IN ('none', 'gst', 'vat')),
+  tax_id            TEXT NOT NULL DEFAULT '',
+  logo_url          TEXT,
+  address           TEXT NOT NULL DEFAULT '',
+  business_email    TEXT NOT NULL DEFAULT '',
+  phone             TEXT NOT NULL DEFAULT '',
+  enabled_modules   TEXT[] NOT NULL DEFAULT '{}',
+  created_by        UUID NOT NULL REFERENCES auth.users(id),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at        TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS public.organization_members (
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  role            TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'manager', 'member')),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (organization_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_org_members_user ON public.organization_members(user_id);
+
+-- ── 3. Membership helpers (SECURITY DEFINER so RLS policies can use them
+--       without recursing into organization_members' own policies) ───────────
+CREATE OR REPLACE FUNCTION public.is_org_member(org_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE
+SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.organization_members
+    WHERE organization_id = org_id AND user_id = auth.uid()
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.org_role(org_id UUID)
+RETURNS TEXT
+LANGUAGE sql STABLE
+SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT role FROM public.organization_members
+  WHERE organization_id = org_id AND user_id = auth.uid();
+$$;
+
+-- Atomic org creation: inserts the organization and its owner membership in
+-- one transaction, avoiding the RLS chicken-and-egg between the two tables.
+CREATE OR REPLACE FUNCTION public.create_organization(
+  org_name          TEXT,
+  org_business_type TEXT DEFAULT 'custom',
+  org_industry      TEXT DEFAULT '',
+  org_country       TEXT DEFAULT '',
+  org_currency      TEXT DEFAULT 'USD',
+  org_timezone      TEXT DEFAULT 'UTC',
+  org_fiscal_start  INTEGER DEFAULT 1,
+  org_business_size TEXT DEFAULT '1-10',
+  org_tax_scheme    TEXT DEFAULT 'none',
+  org_tax_id        TEXT DEFAULT '',
+  org_logo_url      TEXT DEFAULT NULL,
+  org_address       TEXT DEFAULT '',
+  org_email         TEXT DEFAULT '',
+  org_phone         TEXT DEFAULT '',
+  org_modules       TEXT[] DEFAULT '{}'
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  new_org_id UUID;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+  IF org_name IS NULL OR length(trim(org_name)) = 0 THEN
+    RAISE EXCEPTION 'Organization name is required';
+  END IF;
+
+  INSERT INTO public.organizations (
+    name, business_type, industry, country, currency, timezone,
+    fiscal_year_start, business_size, tax_scheme, tax_id, logo_url,
+    address, business_email, phone, enabled_modules, created_by
+  ) VALUES (
+    trim(org_name), org_business_type, org_industry, org_country, org_currency, org_timezone,
+    org_fiscal_start, org_business_size, org_tax_scheme, org_tax_id, org_logo_url,
+    org_address, org_email, org_phone, org_modules, auth.uid()
+  )
+  RETURNING id INTO new_org_id;
+
+  INSERT INTO public.organization_members (organization_id, user_id, role)
+  VALUES (new_org_id, auth.uid(), 'owner');
+
+  RETURN new_org_id;
+END;
+$$;
+
+-- ── 4. updated_at maintenance ────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+-- ── 5. Business tables (all org-scoped, soft-deletable, audited) ─────────────
+
+CREATE TABLE IF NOT EXISTS public.customers (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  email           TEXT NOT NULL DEFAULT '',
+  phone           TEXT NOT NULL DEFAULT '',
+  address         TEXT NOT NULL DEFAULT '',
+  notes           TEXT NOT NULL DEFAULT '',
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS public.suppliers (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  email           TEXT NOT NULL DEFAULT '',
+  phone           TEXT NOT NULL DEFAULT '',
+  address         TEXT NOT NULL DEFAULT '',
+  notes           TEXT NOT NULL DEFAULT '',
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS public.leads (
-  id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  name        TEXT NOT NULL,
-  partner     TEXT NOT NULL,
-  stage       TEXT NOT NULL DEFAULT 's1',
-  probability INTEGER DEFAULT 10,
-  revenue     NUMERIC DEFAULT 0,
-  "user"      TEXT,
-  priority    INTEGER DEFAULT 1,
-  tag         TEXT,
-  created     DATE DEFAULT CURRENT_DATE,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  partner         TEXT NOT NULL DEFAULT '',
+  stage           TEXT NOT NULL DEFAULT 's1',
+  probability     INTEGER NOT NULL DEFAULT 10 CHECK (probability BETWEEN 0 AND 100),
+  revenue         NUMERIC NOT NULL DEFAULT 0,
+  owner_name      TEXT NOT NULL DEFAULT '',
+  priority        INTEGER NOT NULL DEFAULT 1 CHECK (priority BETWEEN 1 AND 3),
+  tag             TEXT NOT NULL DEFAULT 'Cold',
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
 );
 
--- ── 3. Sales Orders ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.sales_orders (
-  id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  customer    TEXT NOT NULL,
-  date        DATE DEFAULT CURRENT_DATE,
-  total       NUMERIC DEFAULT 0,
-  status      TEXT DEFAULT 'Draft',
-  salesperson TEXT,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  number          TEXT NOT NULL DEFAULT '',
+  customer        TEXT NOT NULL,
+  date            DATE NOT NULL DEFAULT CURRENT_DATE,
+  total           NUMERIC NOT NULL DEFAULT 0,
+  status          TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Confirmed', 'Invoiced', 'Done', 'Cancelled')),
+  salesperson     TEXT NOT NULL DEFAULT '',
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
 );
 
--- ── 4. Products / Inventory ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.products (
-  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  name       TEXT NOT NULL,
-  category   TEXT,
-  qty        INTEGER DEFAULT 0,
-  price      NUMERIC DEFAULT 0,
-  status     TEXT DEFAULT 'In Stock',
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  category        TEXT NOT NULL DEFAULT '',
+  sku             TEXT NOT NULL DEFAULT '',
+  qty             INTEGER NOT NULL DEFAULT 0,
+  reorder_level   INTEGER NOT NULL DEFAULT 10,
+  price           NUMERIC NOT NULL DEFAULT 0,
+  cost            NUMERIC NOT NULL DEFAULT 0,
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
 );
 
--- ── 5. Invoices ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.invoices (
-  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  customer   TEXT NOT NULL,
-  date       DATE DEFAULT CURRENT_DATE,
-  due        DATE,
-  amount     NUMERIC DEFAULT 0,
-  status     TEXT DEFAULT 'Draft',
-  payment    TEXT DEFAULT 'Unpaid',
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  number          TEXT NOT NULL DEFAULT '',
+  customer        TEXT NOT NULL,
+  date            DATE NOT NULL DEFAULT CURRENT_DATE,
+  due             DATE,
+  amount          NUMERIC NOT NULL DEFAULT 0,
+  status          TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Posted', 'Cancelled')),
+  payment         TEXT NOT NULL DEFAULT 'Unpaid' CHECK (payment IN ('Paid', 'Unpaid', 'Overdue')),
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
 );
 
--- ── 6. Employees ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.employees (
-  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  name       TEXT NOT NULL,
-  role       TEXT,
-  dept       TEXT,
-  email      TEXT,
-  phone      TEXT,
-  status     TEXT DEFAULT 'Active',
-  join_date  DATE DEFAULT CURRENT_DATE,
-  initials   TEXT,
-  color      TEXT DEFAULT '#4F46E5',
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  role            TEXT NOT NULL DEFAULT '',
+  dept            TEXT NOT NULL DEFAULT '',
+  email           TEXT NOT NULL DEFAULT '',
+  phone           TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'Active' CHECK (status IN ('Active', 'On Leave', 'Terminated')),
+  join_date       DATE NOT NULL DEFAULT CURRENT_DATE,
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
 );
 
--- ── 7. Projects ──────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.projects (
-  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  name       TEXT NOT NULL,
-  client     TEXT,
-  status     TEXT DEFAULT 'Planning',
-  progress   INTEGER DEFAULT 0,
-  due_date   DATE,
-  team       TEXT[],
-  tasks      INTEGER DEFAULT 0,
-  done       INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  client          TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'Planning' CHECK (status IN ('Planning', 'In Progress', 'On Hold', 'Completed')),
+  progress        INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+  due_date        DATE,
+  team            TEXT[] NOT NULL DEFAULT '{}',
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
 );
 
--- ── 8. Tickets (Helpdesk) ────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.project_tasks (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  project_id      UUID REFERENCES public.projects(id) ON DELETE CASCADE,
+  title           TEXT NOT NULL,
+  stage           TEXT NOT NULL DEFAULT 'To Do' CHECK (stage IN ('To Do', 'In Progress', 'Done')),
+  assignee        TEXT NOT NULL DEFAULT '',
+  priority        TEXT NOT NULL DEFAULT 'Medium' CHECK (priority IN ('Low', 'Medium', 'High')),
+  due             DATE,
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS public.tickets (
-  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  title      TEXT NOT NULL,
-  customer   TEXT,
-  priority   TEXT DEFAULT 'Medium',
-  status     TEXT DEFAULT 'Open',
-  assignee   TEXT,
-  created    DATE DEFAULT CURRENT_DATE,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  title           TEXT NOT NULL,
+  customer        TEXT NOT NULL DEFAULT '',
+  priority        TEXT NOT NULL DEFAULT 'Medium' CHECK (priority IN ('Low', 'Medium', 'High', 'Urgent')),
+  status          TEXT NOT NULL DEFAULT 'Open' CHECK (status IN ('Open', 'In Progress', 'Resolved')),
+  assignee        TEXT NOT NULL DEFAULT '',
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
 );
 
--- ── 9. Manufacturing Orders ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.manufacturing_orders (
-  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-  product    TEXT NOT NULL,
-  qty        INTEGER DEFAULT 0,
-  bom        TEXT,
-  status     TEXT DEFAULT 'Planned',
-  scheduled  DATE,
-  workcenter TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  product         TEXT NOT NULL,
+  qty             INTEGER NOT NULL DEFAULT 0,
+  bom             TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'Planned' CHECK (status IN ('Planned', 'In Progress', 'Done', 'Cancelled')),
+  scheduled       DATE,
+  workcenter      TEXT NOT NULL DEFAULT '',
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
 );
 
--- ============================================================
--- ROW LEVEL SECURITY
--- ============================================================
+CREATE TABLE IF NOT EXISTS public.campaigns (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  channel         TEXT NOT NULL DEFAULT 'Email' CHECK (channel IN ('Email', 'Social', 'Ads', 'SMS', 'Event', 'Other')),
+  status          TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Active', 'Paused', 'Completed')),
+  budget          NUMERIC NOT NULL DEFAULT 0,
+  spent           NUMERIC NOT NULL DEFAULT 0,
+  leads_generated INTEGER NOT NULL DEFAULT 0,
+  start_date      DATE,
+  end_date        DATE,
+  created_by      UUID REFERENCES auth.users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ
+);
 
-ALTER TABLE public.profiles            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.leads               ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sales_orders        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.products            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.invoices            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.employees           ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.projects            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tickets             ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.manufacturing_orders ENABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS public.notifications (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  user_id         UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  type            TEXT NOT NULL DEFAULT 'info',
+  text            TEXT NOT NULL,
+  unread          BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
--- Drop existing policies first to avoid conflicts on re-run
-DO $$ BEGIN
-  -- profiles
-  DROP POLICY IF EXISTS "Profiles viewable by authenticated" ON public.profiles;
-  DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
-  -- leads
-  DROP POLICY IF EXISTS "Auth users can read leads" ON public.leads;
-  DROP POLICY IF EXISTS "Auth users can write leads" ON public.leads;
-  -- sales_orders
-  DROP POLICY IF EXISTS "Auth users can read orders" ON public.sales_orders;
-  DROP POLICY IF EXISTS "Auth users can write orders" ON public.sales_orders;
-  -- products
-  DROP POLICY IF EXISTS "Auth users can read products" ON public.products;
-  DROP POLICY IF EXISTS "Auth users can write products" ON public.products;
-  -- invoices
-  DROP POLICY IF EXISTS "Auth users can read invoices" ON public.invoices;
-  DROP POLICY IF EXISTS "Auth users can write invoices" ON public.invoices;
-  -- employees
-  DROP POLICY IF EXISTS "Auth users can read employees" ON public.employees;
-  DROP POLICY IF EXISTS "Auth users can write employees" ON public.employees;
-  -- projects
-  DROP POLICY IF EXISTS "Auth users can read projects" ON public.projects;
-  DROP POLICY IF EXISTS "Auth users can write projects" ON public.projects;
-  -- tickets
-  DROP POLICY IF EXISTS "Auth users can read tickets" ON public.tickets;
-  DROP POLICY IF EXISTS "Auth users can write tickets" ON public.tickets;
-  -- manufacturing_orders
-  DROP POLICY IF EXISTS "Auth users can read mfg" ON public.manufacturing_orders;
-  DROP POLICY IF EXISTS "Auth users can write mfg" ON public.manufacturing_orders;
+-- ── 6. Indexes ────────────────────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_customers_org      ON public.customers(organization_id)            WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_suppliers_org      ON public.suppliers(organization_id)            WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_org          ON public.leads(organization_id)                WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sales_orders_org   ON public.sales_orders(organization_id)         WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_products_org       ON public.products(organization_id)             WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_invoices_org       ON public.invoices(organization_id)             WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_employees_org      ON public.employees(organization_id)            WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_projects_org       ON public.projects(organization_id)             WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_project_tasks_org  ON public.project_tasks(organization_id)        WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_project_tasks_proj ON public.project_tasks(project_id)             WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_tickets_org        ON public.tickets(organization_id)              WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_mfg_orders_org     ON public.manufacturing_orders(organization_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_campaigns_org      ON public.campaigns(organization_id)            WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_notifications_org  ON public.notifications(organization_id, created_at DESC);
+
+-- ── 7. updated_at triggers ────────────────────────────────────────────────────
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'profiles', 'organizations', 'customers', 'suppliers', 'leads',
+    'sales_orders', 'products', 'invoices', 'employees', 'projects',
+    'project_tasks', 'tickets', 'manufacturing_orders', 'campaigns'
+  ] LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS set_updated_at ON public.%I', t);
+    EXECUTE format(
+      'CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.%I
+       FOR EACH ROW EXECUTE FUNCTION public.set_updated_at()', t);
+  END LOOP;
 END $$;
 
--- Profiles
-CREATE POLICY "Profiles viewable by authenticated"  ON public.profiles FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Users can update own profile"         ON public.profiles FOR UPDATE TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
-
--- Business tables: any authenticated user can read + write (full CRUD)
-CREATE POLICY "leads_select"  ON public.leads FOR SELECT TO authenticated USING (true);
-CREATE POLICY "leads_insert"  ON public.leads FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "leads_update"  ON public.leads FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "leads_delete"  ON public.leads FOR DELETE TO authenticated USING (true);
-
-CREATE POLICY "orders_select" ON public.sales_orders FOR SELECT TO authenticated USING (true);
-CREATE POLICY "orders_insert" ON public.sales_orders FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "orders_update" ON public.sales_orders FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "orders_delete" ON public.sales_orders FOR DELETE TO authenticated USING (true);
-
-CREATE POLICY "products_select" ON public.products FOR SELECT TO authenticated USING (true);
-CREATE POLICY "products_insert" ON public.products FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "products_update" ON public.products FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "products_delete" ON public.products FOR DELETE TO authenticated USING (true);
-
-CREATE POLICY "invoices_select" ON public.invoices FOR SELECT TO authenticated USING (true);
-CREATE POLICY "invoices_insert" ON public.invoices FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "invoices_update" ON public.invoices FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "invoices_delete" ON public.invoices FOR DELETE TO authenticated USING (true);
-
-CREATE POLICY "employees_select" ON public.employees FOR SELECT TO authenticated USING (true);
-CREATE POLICY "employees_insert" ON public.employees FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "employees_update" ON public.employees FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "employees_delete" ON public.employees FOR DELETE TO authenticated USING (true);
-
-CREATE POLICY "projects_select" ON public.projects FOR SELECT TO authenticated USING (true);
-CREATE POLICY "projects_insert" ON public.projects FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "projects_update" ON public.projects FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "projects_delete" ON public.projects FOR DELETE TO authenticated USING (true);
-
-CREATE POLICY "tickets_select" ON public.tickets FOR SELECT TO authenticated USING (true);
-CREATE POLICY "tickets_insert" ON public.tickets FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "tickets_update" ON public.tickets FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "tickets_delete" ON public.tickets FOR DELETE TO authenticated USING (true);
-
-CREATE POLICY "mfg_select" ON public.manufacturing_orders FOR SELECT TO authenticated USING (true);
-CREATE POLICY "mfg_insert" ON public.manufacturing_orders FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "mfg_update" ON public.manufacturing_orders FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "mfg_delete" ON public.manufacturing_orders FOR DELETE TO authenticated USING (true);
-
 -- ============================================================
--- SEED DATA (only inserts if tables are empty)
+-- ROW LEVEL SECURITY — everything is organization-scoped
 -- ============================================================
 
-INSERT INTO public.leads (id, name, partner, stage, probability, revenue, "user", priority, tag, created)
-SELECT * FROM (VALUES
-  ('l1', 'Tech Refresh — Acme Corp',       'Acme Corp',    's1', 10,  45000,  'AJ', 2, 'Cold', '2026-06-28'::date),
-  ('l2', 'ERP Implementation — Nexus Ltd', 'Nexus Ltd',    's2', 35, 120000,  'SM', 3, 'Hot',  '2026-07-01'::date),
-  ('l3', 'Cloud Migration',                'Bluewave Inc', 's2', 40,  78000,  'PK', 2, 'Warm', '2026-07-02'::date),
-  ('l4', 'Annual Support Contract',        'Delta Systems','s3', 65,  36000,  'AJ', 1, 'Warm', '2026-06-30'::date),
-  ('l5', 'Module Expansion — HR',          'Helix Corp',   's3', 70,  54000,  'SM', 3, 'Hot',  '2026-07-03'::date),
-  ('l6', 'API Integration Package',        'Vortex Tech',  's4', 100, 22000,  'AJ', 2, 'Won',  '2026-06-25'::date),
-  ('l7', 'Inventory Rollout',              'Glotech SA',   's1', 15,  89000,  'PK', 1, 'Cold', '2026-07-04'::date)
-) AS v(id, name, partner, stage, probability, revenue, "user", priority, tag, created)
-WHERE NOT EXISTS (SELECT 1 FROM public.leads LIMIT 1);
+ALTER TABLE public.profiles             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.organizations        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.organization_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.customers            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.suppliers            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.leads                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sales_orders         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.products             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invoices             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.employees            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.projects             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_tasks        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tickets              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.manufacturing_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.campaigns            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications        ENABLE ROW LEVEL SECURITY;
 
-INSERT INTO public.sales_orders (id, customer, date, total, status, salesperson)
-SELECT * FROM (VALUES
-  ('SO001', 'Nexus Ltd',    '2026-07-01'::date, 120000, 'Confirmed', 'Alex Johnson'),
-  ('SO002', 'Acme Corp',    '2026-07-02'::date,  45000, 'Draft',     'Sara Miles'),
-  ('SO003', 'Bluewave Inc', '2026-07-03'::date,  78000, 'Invoiced',  'Paul Kim'),
-  ('SO004', 'Delta Systems','2026-07-03'::date,  36000, 'Confirmed', 'Alex Johnson'),
-  ('SO005', 'Helix Corp',   '2026-07-04'::date,  54000, 'Draft',     'Sara Miles'),
-  ('SO006', 'Vortex Tech',  '2026-06-25'::date,  22000, 'Done',      'Alex Johnson')
-) AS v(id, customer, date, total, status, salesperson)
-WHERE NOT EXISTS (SELECT 1 FROM public.sales_orders LIMIT 1);
+-- Drop any pre-v3 policies (from the old shared-data schema)
+DO $$
+DECLARE
+  pol RECORD;
+BEGIN
+  FOR pol IN
+    SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pol.policyname, pol.tablename);
+  END LOOP;
+END $$;
 
-INSERT INTO public.products (id, name, category, qty, price, status)
-SELECT * FROM (VALUES
-  ('p1', 'Laptop Pro X1',       'Electronics', 142, 1299, 'In Stock'),
-  ('p2', 'Wireless Headset Z',  'Electronics',  23,  189, 'Low Stock'),
-  ('p3', 'Office Chair Ergo',   'Furniture',    57,  349, 'In Stock'),
-  ('p4', 'Standing Desk Pro',   'Furniture',     8,  799, 'Low Stock'),
-  ('p5', 'USB-C Hub 7-Port',    'Accessories', 214,   49, 'In Stock'),
-  ('p6', '4K Monitor 27"',      'Electronics',   0,  649, 'Out of Stock'),
-  ('p7', 'Mechanical Keyboard', 'Accessories',  81,  159, 'In Stock')
-) AS v(id, name, category, qty, price, status)
-WHERE NOT EXISTS (SELECT 1 FROM public.products LIMIT 1);
+-- Profiles: users see and edit only their own profile
+CREATE POLICY "profiles_select_own" ON public.profiles
+  FOR SELECT TO authenticated USING (auth.uid() = id);
+CREATE POLICY "profiles_update_own" ON public.profiles
+  FOR UPDATE TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 
-INSERT INTO public.invoices (id, customer, date, due, amount, status, payment)
-SELECT * FROM (VALUES
-  ('INV-001', 'Nexus Ltd',    '2026-07-01'::date, '2026-07-31'::date, 120000, 'Posted', 'Unpaid'),
-  ('INV-002', 'Acme Corp',    '2026-06-28'::date, '2026-07-28'::date,  45000, 'Posted', 'Paid'),
-  ('INV-003', 'Bluewave Inc', '2026-07-03'::date, '2026-08-02'::date,  78000, 'Draft',  'Unpaid'),
-  ('INV-004', 'Delta Systems','2026-06-20'::date, '2026-07-20'::date,  36000, 'Posted', 'Overdue'),
-  ('INV-005', 'Helix Corp',   '2026-07-04'::date, '2026-08-04'::date,  54000, 'Draft',  'Unpaid')
-) AS v(id, customer, date, due, amount, status, payment)
-WHERE NOT EXISTS (SELECT 1 FROM public.invoices LIMIT 1);
+-- Organizations: members read; owner/admin update; creation via create_organization()
+CREATE POLICY "orgs_select_member" ON public.organizations
+  FOR SELECT TO authenticated USING (public.is_org_member(id));
+CREATE POLICY "orgs_update_admin" ON public.organizations
+  FOR UPDATE TO authenticated
+  USING (public.org_role(id) IN ('owner', 'admin'))
+  WITH CHECK (public.org_role(id) IN ('owner', 'admin'));
 
-INSERT INTO public.employees (id, name, role, dept, email, phone, status, join_date, initials, color)
-SELECT * FROM (VALUES
-  ('e1', 'Alex Johnson', 'Sales Manager',    'Sales',    'alex@erpixa.com',    '+1-555-0101', 'Active', '2024-01-15'::date, 'AJ', '#4F46E5'),
-  ('e2', 'Sara Miles',   'HR Director',      'HR',       'sara@erpixa.com',    '+1-555-0102', 'Active', '2024-02-01'::date, 'SM', '#7C3AED'),
-  ('e3', 'Paul Kim',     'Lead Engineer',    'Tech',     'paul@erpixa.com',    '+1-555-0103', 'Active', '2023-11-10'::date, 'PK', '#059669'),
-  ('e4', 'Diana Lee',    'Product Manager',  'Product',  'diana@erpixa.com',   '+1-555-0104', 'Active', '2024-03-20'::date, 'DL', '#DC2626'),
-  ('e5', 'Marcus Grant', 'Support Lead',     'Helpdesk', 'marcus@erpixa.com',  '+1-555-0105', 'Active', '2024-04-05'::date, 'MG', '#D97706')
-) AS v(id, name, role, dept, email, phone, status, join_date, initials, color)
-WHERE NOT EXISTS (SELECT 1 FROM public.employees LIMIT 1);
+-- Organization members: members can list their org's roster;
+-- owner/admin manage membership (add/change/remove) but cannot remove the owner.
+CREATE POLICY "org_members_select" ON public.organization_members
+  FOR SELECT TO authenticated USING (public.is_org_member(organization_id));
+CREATE POLICY "org_members_insert_admin" ON public.organization_members
+  FOR INSERT TO authenticated WITH CHECK (public.org_role(organization_id) IN ('owner', 'admin'));
+CREATE POLICY "org_members_update_admin" ON public.organization_members
+  FOR UPDATE TO authenticated
+  USING (public.org_role(organization_id) IN ('owner', 'admin') AND role <> 'owner')
+  WITH CHECK (public.org_role(organization_id) IN ('owner', 'admin') AND role <> 'owner');
+CREATE POLICY "org_members_delete" ON public.organization_members
+  FOR DELETE TO authenticated
+  USING (
+    role <> 'owner'
+    AND (public.org_role(organization_id) IN ('owner', 'admin') OR user_id = auth.uid())
+  );
 
-INSERT INTO public.projects (id, name, client, status, progress, due_date, team, tasks, done)
-SELECT * FROM (VALUES
-  ('pr1', 'ERP Rollout Phase 1',   'Nexus Ltd',    'In Progress', 65, '2026-08-31'::date, ARRAY['AJ','PK','DL'], 12, 8),
-  ('pr2', 'Cloud Migration',       'Bluewave Inc', 'In Progress', 40, '2026-09-15'::date, ARRAY['PK','SM'],       8, 3),
-  ('pr3', 'HR Portal Redesign',    'Helix Corp',   'Planning',    10, '2026-10-01'::date, ARRAY['SM','DL'],       6, 1),
-  ('pr4', 'Support Desk Upgrade',  'Delta Systems','Completed',  100, '2026-06-30'::date, ARRAY['MG','AJ'],      10, 10)
-) AS v(id, name, client, status, progress, due_date, team, tasks, done)
-WHERE NOT EXISTS (SELECT 1 FROM public.projects LIMIT 1);
+-- Business tables: full CRUD for org members, always scoped to the member's org.
+-- Hard DELETE is intentionally not granted — the app soft-deletes via deleted_at.
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'customers', 'suppliers', 'leads', 'sales_orders', 'products', 'invoices',
+    'employees', 'projects', 'project_tasks', 'tickets', 'manufacturing_orders',
+    'campaigns'
+  ] LOOP
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR SELECT TO authenticated
+       USING (public.is_org_member(organization_id))', t || '_select', t);
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR INSERT TO authenticated
+       WITH CHECK (public.is_org_member(organization_id))', t || '_insert', t);
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR UPDATE TO authenticated
+       USING (public.is_org_member(organization_id))
+       WITH CHECK (public.is_org_member(organization_id))', t || '_update', t);
+  END LOOP;
+END $$;
 
-INSERT INTO public.tickets (id, title, customer, priority, status, assignee, created)
-SELECT * FROM (VALUES
-  ('TK-001', 'Cannot login after password reset',      'Acme Corp',    'Urgent', 'Open',        'AJ', '2026-07-05'::date),
-  ('TK-002', 'Invoice PDF not generating correctly',   'Nexus Ltd',    'High',   'In Progress', 'DL', '2026-07-04'::date),
-  ('TK-003', 'Stock levels not syncing',               'Bluewave Inc', 'Medium', 'In Progress', 'PK', '2026-07-04'::date),
-  ('TK-004', 'Feature request: bulk import employees', 'Helix Corp',   'Low',    'Open',        'MG', '2026-07-03'::date),
-  ('TK-005', 'Email notifications not sending',        'Delta Systems','High',   'Resolved',    'AJ', '2026-07-02'::date)
-) AS v(id, title, customer, priority, status, assignee, created)
-WHERE NOT EXISTS (SELECT 1 FROM public.tickets LIMIT 1);
-
-INSERT INTO public.manufacturing_orders (id, product, qty, bom, status, scheduled, workcenter)
-SELECT * FROM (VALUES
-  ('MO-001', 'Laptop Pro X1',       50, 'BOM-LP-001', 'In Progress', '2026-07-20'::date, 'Assembly Line A'),
-  ('MO-002', 'Wireless Headset Z',  200, 'BOM-WH-002', 'Planned',    '2026-08-01'::date, 'Assembly Line B'),
-  ('MO-003', 'USB-C Hub 7-Port',    500, 'BOM-UH-003', 'Planned',    '2026-07-25'::date, 'Assembly Line A')
-) AS v(id, product, qty, bom, status, scheduled, workcenter)
-WHERE NOT EXISTS (SELECT 1 FROM public.manufacturing_orders LIMIT 1);
-
--- ── Make yourself an admin ───────────────────────────────────────────────────
--- Run this separately AFTER signing in for the first time:
--- UPDATE public.profiles SET role = 'admin' WHERE email = 'YOUR_EMAIL_HERE';
+-- Notifications: org members read; personal notifications only for their user;
+-- mark-as-read updates allowed for the same scope.
+CREATE POLICY "notifications_select" ON public.notifications
+  FOR SELECT TO authenticated
+  USING (public.is_org_member(organization_id) AND (user_id IS NULL OR user_id = auth.uid()));
+CREATE POLICY "notifications_insert" ON public.notifications
+  FOR INSERT TO authenticated WITH CHECK (public.is_org_member(organization_id));
+CREATE POLICY "notifications_update" ON public.notifications
+  FOR UPDATE TO authenticated
+  USING (public.is_org_member(organization_id) AND (user_id IS NULL OR user_id = auth.uid()))
+  WITH CHECK (public.is_org_member(organization_id) AND (user_id IS NULL OR user_id = auth.uid()));
