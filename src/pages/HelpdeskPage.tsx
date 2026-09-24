@@ -3,12 +3,14 @@ import { useUIStore } from '../store';
 import { useDataStore } from '../store/dataStore';
 import type { Ticket } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput, StatusBadge } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { TICKET_FIELDS } from '../lib/recordFields';
+import { moduleById } from '../lib/modules';
+import { initialsOf } from '../lib/format';
+import { stagger } from '../lib/motion';
 
-function initialsOf(name: string): string {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || '?';
-}
+const PRIORITIES = ['Urgent', 'High', 'Medium', 'Low'];
 
 export default function HelpdeskPage() {
   const tickets = useDataStore((s) => s.tickets);
@@ -18,23 +20,28 @@ export default function HelpdeskPage() {
   const addToast = useUIStore((s) => s.addToast);
 
   const [search, setSearch] = useState('');
+  const [view, setView] = useState<'open' | 'all' | 'resolved'>('open');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Ticket | null>(null);
   const [deleting, setDeleting] = useState<Ticket | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const filtered = tickets.filter((t) => {
-    const q = search.toLowerCase();
-    return (
-      t.title.toLowerCase().includes(q) ||
-      t.customer.toLowerCase().includes(q) ||
-      t.assignee.toLowerCase().includes(q)
-    );
-  });
+  const q = search.toLowerCase();
+  const filtered = tickets
+    .filter((t) =>
+      (t.title.toLowerCase().includes(q) || t.customer.toLowerCase().includes(q) || t.assignee.toLowerCase().includes(q)) &&
+      (view === 'all' || (view === 'open' ? t.status !== 'Resolved' : t.status === 'Resolved')))
+    // Most urgent first, so the queue reads top-down.
+    .sort((a, b) => PRIORITIES.indexOf(a.priority) - PRIORITIES.indexOf(b.priority));
 
   const openCount = tickets.filter((t) => t.status !== 'Resolved').length;
-  const urgentCount = tickets.filter((t) => t.priority === 'Urgent').length;
+  const urgentCount = tickets.filter((t) => t.priority === 'Urgent' && t.status !== 'Resolved').length;
   const resolvedCount = tickets.filter((t) => t.status === 'Resolved').length;
+  const views: { id: typeof view; label: string; count: number }[] = [
+    { id: 'open', label: 'Open', count: openCount },
+    { id: 'resolved', label: 'Resolved', count: resolvedCount },
+    { id: 'all', label: 'All', count: tickets.length },
+  ];
 
   const openCreate = () => { setEditing(null); setModalOpen(true); };
   const openEdit = (t: Ticket) => { setEditing(t); setModalOpen(true); };
@@ -68,39 +75,37 @@ export default function HelpdeskPage() {
     status: editing.status, assignee: editing.assignee,
   };
 
+  const viewIndex = views.findIndex((v) => v.id === view);
+
   return (
-    <div className="fade-in">
+    <div className="page">
       <PageHeader
+        eyebrow={moduleById('helpdesk').group}
+        icon="helpdesk"
         title="Helpdesk"
-        subtitle="Resolve customer issues and manage support tickets."
+        subtitle={moduleById('helpdesk').blurb}
         actionLabel="New ticket"
         onAction={openCreate}
       />
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-teal stagger-1">
-          <div className="kpi-label">Open Tickets</div>
-          <div className="kpi-value">{openCount}</div>
-          <div className="kpi-change">Needs attention</div>
-        </div>
-        <div className="card kpi-card kpi-rose stagger-2">
-          <div className="kpi-label">Urgent Issues</div>
-          <div className="kpi-value">{urgentCount}</div>
-          <div className="kpi-change">Immediate action required</div>
-        </div>
-        <div className="card kpi-card kpi-emerald stagger-3">
-          <div className="kpi-label">Resolved</div>
-          <div className="kpi-value">{resolvedCount}</div>
-          <div className="kpi-change">Closed tickets</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="Open tickets" value={openCount} caption="Waiting on your team" tone="accent" icon="inbox" />
+        <Stat index={1} label="Urgent" value={urgentCount} caption="Open and marked urgent" tone={urgentCount > 0 ? 'danger' : 'neutral'} icon="alert" />
+        <Stat index={2} label="Resolved" value={resolvedCount} caption="Closed out" tone="success" icon="check" />
+      </Stats>
 
-      <div className="card">
+      <section className="card section" aria-label="Tickets">
         {tickets.length > 0 && (
-          <div className="card-header">
-            <div style={{ display: 'flex', gap: 12, flex: 1, flexWrap: 'wrap' }}>
-              <input className="tinput" placeholder="Search tickets…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 300 }} />
+          <div className="toolbar">
+            <div className="segmented" role="tablist" aria-label="Ticket view" style={{ minWidth: 280 }}>
+              <span className="segmented-thumb" aria-hidden="true" style={{ width: 'calc((100% - 6px) / 3)', transform: `translateX(${viewIndex * 100}%)` }} />
+              {views.map((v) => (
+                <button key={v.id} type="button" role="tab" aria-selected={view === v.id} onClick={() => setView(v.id)} style={{ height: 30, fontSize: 'var(--t-sm)' }}>
+                  {v.label} <span className="muted num">{v.count}</span>
+                </button>
+              ))}
             </div>
+            <SearchInput value={search} onChange={setSearch} placeholder="Search subject, customer or assignee…" />
           </div>
         )}
 
@@ -108,7 +113,7 @@ export default function HelpdeskPage() {
           <EmptyState
             icon="ticket"
             title="No tickets yet"
-            message="Create your first support ticket to start tracking customer issues."
+            message="Log your first support ticket to start tracking customer issues."
             actionLabel="New ticket"
             onAction={openCreate}
           />
@@ -117,54 +122,40 @@ export default function HelpdeskPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Subject</th><th>Customer</th><th>Priority</th><th>Status</th><th>Assignee</th><th style={{ textAlign: 'right' }}>Actions</th>
+                  <th>Subject</th><th>Priority</th><th>Status</th><th>Assignee</th>
+                  <th className="actions"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
-              <tbody>
-                {filtered.map((t) => (
-                  <tr key={t.id}>
-                    <td className="font-semibold">{t.title}</td>
-                    <td>{t.customer || '—'}</td>
+              <tbody key={view}>
+                {filtered.map((t, i) => (
+                  <tr key={t.id} style={stagger(i)}>
                     <td>
-                      <span className={`badge ${
-                        t.priority === 'Urgent' ? 'badge-danger' :
-                        t.priority === 'High' ? 'badge-warning' :
-                        t.priority === 'Medium' ? 'badge-info' :
-                        'badge-neutral'
-                      }`}>
-                        {t.priority}
-                      </span>
+                      <div className="cell-main">{t.title}</div>
+                      <div className="cell-sub">{t.customer || 'No customer'}</div>
                     </td>
-                    <td>
-                      <span className={`badge ${
-                        t.status === 'Resolved' ? 'badge-success' :
-                        t.status === 'In Progress' ? 'badge-soft-primary' :
-                        'badge-neutral'
-                      }`}>
-                        {t.status}
-                      </span>
-                    </td>
+                    <td><StatusBadge status={t.priority} /></td>
+                    <td><StatusBadge status={t.status} /></td>
                     <td>
                       {t.assignee ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div className="avatar avatar-sm">{initialsOf(t.assignee)}</div>
-                          <span>{t.assignee}</span>
+                        <div className="cell-person">
+                          <span className="avatar avatar-sm filled" style={{ background: 'var(--ink-2)', color: 'var(--paper)' }} aria-hidden="true">{initialsOf(t.assignee)}</span>
+                          <span className="truncate">{t.assignee}</span>
                         </div>
                       ) : (
-                        <span className="text-muted">—</span>
+                        <span className="badge badge-warning no-dot">Unassigned</span>
                       )}
                     </td>
-                    <td><RowActions onEdit={() => openEdit(t)} onDelete={() => setDeleting(t)} /></td>
+                    <td className="actions"><RowActions label={t.title} onEdit={() => openEdit(t)} onDelete={() => setDeleting(t)} /></td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: 32 }} className="text-muted">No tickets match your filters.</td></tr>
+                  <tr className="empty-row"><td colSpan={5}>{view === 'open' && !search ? 'No open tickets — the queue is clear.' : 'No tickets match these filters.'}</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {modalOpen && (
         <RecordModal
@@ -178,7 +169,7 @@ export default function HelpdeskPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete ticket?"
+          title="Delete this ticket?"
           message={`“${deleting.title}” will be removed from your helpdesk. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

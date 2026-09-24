@@ -5,18 +5,33 @@
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description"
-    content="Erpixa — Intelligent Enterprise Management Platform. CRM, Sales, Inventory, Accounting, HR, Projects, Manufacturing and more." />
-  <meta name="theme-color" content="#4F46E5" />
-  <meta property="og:title" content="Erpixa — Business Management Platform" />
+    content="Erpixa — one ledger for the whole business. CRM, sales, inventory, accounting, HR, projects, manufacturing, helpdesk and marketing, shaped around the business you run." />
+  <meta name="theme-color" content="#F2F4F1" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0A1113" media="(prefers-color-scheme: dark)" />
+  <meta property="og:title" content="Erpixa — The whole business, in one ledger" />
   <meta property="og:description"
-    content="Erpixa — Intelligent Enterprise Management Platform. CRM, Sales, Inventory, Accounting, HR, Projects, Manufacturing and more." />
+    content="CRM, sales, inventory, accounting, HR, projects, manufacturing, helpdesk and marketing in one workspace." />
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="Erpixa — Business Management Platform" />
-  <meta name="twitter:description" content="Intelligent Enterprise Management Platform for modern teams." />
-  <title>Erpixa — Business Management Platform</title>
+  <meta name="twitter:title" content="Erpixa — The whole business, in one ledger" />
+  <meta name="twitter:description" content="One workspace for sales, stock, invoices, people and production." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=Geist:wght@300..700&family=Geist+Mono:wght@400..600&display=swap" />
+  <script>
+    // Apply a stored explicit theme before first paint so there is no flash.
+    // "system" (or nothing stored) leaves the attribute off and CSS follows the OS.
+    try {
+      var t = localStorage.getItem('erpixa-theme');
+      if (t === 'midnight') t = 'dark';
+      if (t === 'aurora' || t === 'enterprise') t = 'light';
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* storage unavailable — follow the OS */ }
+  </script>
+  <title>Erpixa — The whole business, in one ledger</title>
 </head>
 
 <body>

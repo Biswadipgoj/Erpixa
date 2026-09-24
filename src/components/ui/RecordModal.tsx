@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { stagger, useExitThen } from '../../lib/motion';
 import Icon from './Icon';
 
 export interface FieldDef {
@@ -41,6 +42,8 @@ function friendlyError(err: unknown): string {
   return message || 'Something unexpected happened. Please try again.';
 }
 
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
 /** Generic create/edit modal driven by a field definition list. */
 export default function RecordModal({ title, submitLabel = 'Save', fields, initial, onSubmit, onClose }: RecordModalProps) {
   const [values, setValues] = useState<Record<string, string>>(() =>
@@ -54,13 +57,18 @@ export default function RecordModal({ title, submitLabel = 'Save', fields, initi
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const firstInputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const { closing, requestClose } = useExitThen(onClose);
 
   useEffect(() => {
     firstInputRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !submitting) requestClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [requestClose, submitting]);
 
   const setValue = (name: string, value: string) => {
     setValues((v) => ({ ...v, [name]: value }));
@@ -92,67 +100,85 @@ export default function RecordModal({ title, submitLabel = 'Save', fields, initi
         parsed[f.name] = f.type === 'number' ? Number(raw || 0) : raw;
       }
       await onSubmit(parsed);
-      onClose();
+      requestClose();
     } catch (err) {
       setSubmitError(friendlyError(err));
       setSubmitting(false);
     }
   };
 
+  // First field (the record's name) runs full width; the rest pair up, and a
+  // trailing odd one out stretches so the grid never ends on a hole.
+  const spanFull = (i: number) => i === 0 || (i === fields.length - 1 && (fields.length - 1) % 2 === 1);
+
   return (
-    <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <div className="modal modal-sm" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{title}</h3>
-          <button type="button" onClick={onClose} aria-label="Close dialog" className="topnav-icon-btn">
+    <div className={`modal-backdrop${closing ? ' is-closing' : ''}`} onClick={() => { if (!submitting) requestClose(); }} role="presentation">
+      <div className="modal modal-md" role="dialog" aria-modal="true" aria-labelledby="record-modal-title" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <h2 id="record-modal-title">{title}</h2>
+            <p>Fields marked <span style={{ color: 'var(--danger)' }}>*</span> are required.</p>
+          </div>
+          <button type="button" onClick={requestClose} aria-label="Close dialog" className="icon-btn" disabled={submitting}>
             <Icon name="close" size={18} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {fields.map((f, i) => (
-              <div className="input-wrap" key={f.name}>
-                <label className="input-label" htmlFor={`field-${f.name}`}>
-                  {f.label}{f.required && <span aria-hidden="true" style={{ color: 'var(--danger)' }}> *</span>}
-                </label>
-                {f.type === 'select' ? (
-                  <select
-                    id={`field-${f.name}`}
-                    ref={i === 0 ? (el) => { firstInputRef.current = el; } : undefined}
-                    className="tinput select"
-                    value={values[f.name]}
-                    onChange={(e) => setValue(f.name, e.target.value)}
-                  >
-                    {asOptions(f.options).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                ) : (
-                  <input
-                    id={`field-${f.name}`}
-                    ref={i === 0 ? (el) => { firstInputRef.current = el; } : undefined}
-                    className="tinput"
-                    type={f.type}
-                    inputMode={f.type === 'number' ? 'decimal' : undefined}
-                    placeholder={f.placeholder}
-                    value={values[f.name]}
-                    onChange={(e) => setValue(f.name, e.target.value)}
-                    aria-invalid={!!errors[f.name]}
-                  />
-                )}
-                {errors[f.name] && (
-                  <span role="alert" style={{ color: 'var(--danger)', fontSize: '0.75rem', fontWeight: 600 }}>{errors[f.name]}</span>
-                )}
-              </div>
-            ))}
+        <form
+          ref={formRef}
+          onSubmit={handleSubmit}
+          noValidate
+          style={{ display: 'contents' }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); formRef.current?.requestSubmit(); } }}
+        >
+          <div className="modal-body">
+            {fields.map((f, i) => {
+              const id = `field-${f.name}`;
+              const err = errors[f.name];
+              return (
+                <div className={`field${spanFull(i) ? ' span-2' : ''}`} key={f.name} style={stagger(i)}>
+                  <label className="field-label" htmlFor={id}>
+                    {f.label}{f.required && <span className="req" aria-hidden="true">*</span>}
+                  </label>
+                  {f.type === 'select' ? (
+                    <select
+                      id={id}
+                      ref={i === 0 ? (el) => { firstInputRef.current = el; } : undefined}
+                      className="tinput select"
+                      value={values[f.name]}
+                      onChange={(e) => setValue(f.name, e.target.value)}
+                    >
+                      {asOptions(f.options).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      id={id}
+                      ref={i === 0 ? (el) => { firstInputRef.current = el; } : undefined}
+                      className={`tinput${f.type === 'number' ? ' num' : ''}`}
+                      type={f.type}
+                      inputMode={f.type === 'number' ? 'decimal' : undefined}
+                      placeholder={f.placeholder}
+                      value={values[f.name]}
+                      onChange={(e) => setValue(f.name, e.target.value)}
+                      aria-invalid={!!err}
+                      aria-describedby={err ? `${id}-err` : undefined}
+                      required={f.required}
+                    />
+                  )}
+                  {err && <span id={`${id}-err`} role="alert" className="field-error"><Icon name="alert" size={12} strokeWidth={2} />{err}</span>}
+                </div>
+              );
+            })}
             {submitError && (
-              <div role="alert" style={{ padding: '10px 14px', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 8, color: 'var(--danger)', fontSize: '0.85rem' }}>
-                {submitError}
+              <div role="alert" className="notice notice-danger span-2">
+                <Icon name="alert" size={16} /><span className="notice-text">{submitError}</span>
               </div>
             )}
           </div>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
+          <div className="modal-foot">
+            <span className="hint hide-sm"><kbd>{isMac ? '⌘' : 'Ctrl'}</kbd><kbd>↵</kbd> to save</span>
+            <button type="button" className="btn btn-ghost" onClick={requestClose} disabled={submitting}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={submitting}>
-              {submitting ? 'Saving…' : submitLabel}
+              {submitting ? <><Icon name="spark" size={15} className="spin" /> Saving…</> : <><Icon name="check" size={15} strokeWidth={2.2} /> {submitLabel}</>}
             </button>
           </div>
         </form>

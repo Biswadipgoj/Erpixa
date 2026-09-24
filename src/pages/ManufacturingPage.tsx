@@ -3,8 +3,14 @@ import { useUIStore } from '../store';
 import { useDataStore } from '../store/dataStore';
 import type { ManufacturingOrder } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput, StatusBadge } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { MFG_ORDER_FIELDS } from '../lib/recordFields';
+import { moduleById } from '../lib/modules';
+import { shortDate } from '../lib/format';
+import { stagger } from '../lib/motion';
+
+const STATUSES = ['Planned', 'In Progress', 'Done', 'Cancelled'];
 
 export default function ManufacturingPage() {
   const manufacturingOrders = useDataStore((s) => s.manufacturingOrders);
@@ -20,11 +26,10 @@ export default function ManufacturingPage() {
   const [deleting, setDeleting] = useState<ManufacturingOrder | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const q = search.toLowerCase();
   const filtered = manufacturingOrders.filter((mo) => {
-    const q = search.toLowerCase();
     const matchesSearch = mo.product.toLowerCase().includes(q) || mo.id.toLowerCase().includes(q) || mo.workcenter.toLowerCase().includes(q);
-    const matchesStatus = status === 'all' || mo.status === status;
-    return matchesSearch && matchesStatus;
+    return matchesSearch && (status === 'all' || mo.status === status);
   });
 
   const activeCount = manufacturingOrders.filter((m) => m.status === 'In Progress').length;
@@ -64,45 +69,31 @@ export default function ManufacturingPage() {
   };
 
   return (
-    <div className="fade-in">
+    <div className="page">
       <PageHeader
+        eyebrow={moduleById('manufacturing').group}
+        icon="manufacturing"
         title="Manufacturing"
-        subtitle="Plan, execute, and track production orders."
+        subtitle={moduleById('manufacturing').blurb}
         actionLabel="New order"
         onAction={openCreate}
       />
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-amber stagger-1">
-          <div className="kpi-label">Active Orders</div>
-          <div className="kpi-value">{activeCount}</div>
-          <div className="kpi-change">Currently producing</div>
-        </div>
-        <div className="card kpi-card kpi-teal stagger-2">
-          <div className="kpi-label">Units Produced</div>
-          <div className="kpi-value">{unitsProduced}</div>
-          <div className="kpi-change">From completed orders</div>
-        </div>
-        <div className="card kpi-card kpi-rose stagger-3">
-          <div className="kpi-label">Planned Orders</div>
-          <div className="kpi-value">{plannedCount}</div>
-          <div className="kpi-change">Awaiting production</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="In production" value={activeCount} caption="Orders running now" tone="accent" icon="factory" />
+        <Stat index={1} label="Units produced" value={unitsProduced} caption="From completed orders" tone="success" icon="box" />
+        <Stat index={2} label="Planned" value={plannedCount} caption="Waiting for the floor" tone="info" icon="calendar" />
+      </Stats>
 
-      <div className="card">
+      <section className="card section" aria-label="Manufacturing orders">
         {manufacturingOrders.length > 0 && (
-          <div className="card-header">
-            <div style={{ display: 'flex', gap: 12, flex: 1, flexWrap: 'wrap' }}>
-              <input className="tinput" placeholder="Search orders…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 300 }} />
-              <select className="tinput select" style={{ maxWidth: 180 }} value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="all">All statuses</option>
-                <option value="Planned">Planned</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Done">Done</option>
-                <option value="Cancelled">Cancelled</option>
-              </select>
-            </div>
+          <div className="toolbar">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by product, reference or workcenter…" />
+            <select className="tinput select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
+              <option value="all">All statuses</option>
+              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <span className="toolbar-meta">{filtered.length} of {manufacturingOrders.length}</span>
           </div>
         )}
 
@@ -110,7 +101,7 @@ export default function ManufacturingPage() {
           <EmptyState
             icon="manufacturing"
             title="No manufacturing orders yet"
-            message="Create your first production order to plan, execute, and track manufacturing."
+            message="Create your first production order to plan, run and track manufacturing."
             actionLabel="New order"
             onAction={openCreate}
           />
@@ -119,38 +110,33 @@ export default function ManufacturingPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Reference</th><th>Product</th><th>Quantity</th><th>Scheduled</th><th>Workcenter</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th>
+                  <th>Reference</th><th>Product</th><th className="num">Quantity</th><th>Scheduled</th><th>Workcenter</th><th>Status</th>
+                  <th className="actions"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((mo) => (
-                  <tr key={mo.id}>
-                    <td className="font-semibold text-muted">{mo.id}</td>
-                    <td className="font-semibold">{mo.product}</td>
-                    <td className="font-semibold">{mo.qty}</td>
-                    <td>{mo.scheduled || '—'}</td>
-                    <td>{mo.workcenter || '—'}</td>
+                {filtered.map((mo, i) => (
+                  <tr key={mo.id} style={stagger(i)}>
+                    <td><span className="docno" title={mo.id}>MO-{mo.id.slice(0, 6).toUpperCase()}</span></td>
                     <td>
-                      <span className={`badge ${
-                        mo.status === 'Done' ? 'badge-success' :
-                        mo.status === 'In Progress' ? 'badge-primary' :
-                        mo.status === 'Cancelled' ? 'badge-danger' :
-                        'badge-neutral'
-                      }`}>
-                        {mo.status}
-                      </span>
+                      <div className="cell-main">{mo.product}</div>
+                      {mo.bom && <div className="cell-sub">BOM {mo.bom}</div>}
                     </td>
-                    <td><RowActions onEdit={() => openEdit(mo)} onDelete={() => setDeleting(mo)} /></td>
+                    <td className="num money">{mo.qty.toLocaleString()}</td>
+                    <td className="muted">{shortDate(mo.scheduled)}</td>
+                    <td>{mo.workcenter || <span className="muted">—</span>}</td>
+                    <td><StatusBadge status={mo.status} /></td>
+                    <td className="actions"><RowActions label={mo.product} onEdit={() => openEdit(mo)} onDelete={() => setDeleting(mo)} /></td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32 }} className="text-muted">No manufacturing orders match your filters.</td></tr>
+                  <tr className="empty-row"><td colSpan={7}>No manufacturing orders match these filters.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {modalOpen && (
         <RecordModal
@@ -164,7 +150,7 @@ export default function ManufacturingPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete manufacturing order?"
+          title="Delete this order?"
           message={`The order for “${deleting.product}” will be removed. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

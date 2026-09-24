@@ -3,8 +3,14 @@ import { useUIStore } from '../store';
 import { useDataStore } from '../store/dataStore';
 import type { Project } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput, StatusBadge } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { PROJECT_FIELDS } from '../lib/recordFields';
+import { moduleById } from '../lib/modules';
+import { shortDate } from '../lib/format';
+import { stagger } from '../lib/motion';
+
+const STATUSES = ['Planning', 'In Progress', 'On Hold', 'Completed'];
 
 export default function ProjectsPage() {
   const projects = useDataStore((s) => s.projects);
@@ -14,16 +20,17 @@ export default function ProjectsPage() {
   const addToast = useUIStore((s) => s.addToast);
 
   const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const filtered = projects.filter((p) => {
-    const q = search.toLowerCase();
-    return p.name.toLowerCase().includes(q) || p.client.toLowerCase().includes(q);
-  });
+  const q = search.toLowerCase();
+  const filtered = projects.filter((p) =>
+    (p.name.toLowerCase().includes(q) || p.client.toLowerCase().includes(q)) && (status === 'all' || p.status === status));
 
+  const today = new Date().toISOString().slice(0, 10);
   const active = projects.filter((p) => p.status === 'In Progress').length;
   const doneTasks = projects.reduce((acc, p) => acc + p.done, 0);
   const totalTasks = projects.reduce((acc, p) => acc + p.tasks, 0);
@@ -65,38 +72,31 @@ export default function ProjectsPage() {
   };
 
   return (
-    <div className="fade-in">
+    <div className="page">
       <PageHeader
+        eyebrow={moduleById('projects').group}
+        icon="projects"
         title="Projects"
-        subtitle="Track team progress, deadlines, and deliverables."
+        subtitle={moduleById('projects').blurb}
         actionLabel="New project"
         onAction={openCreate}
       />
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-violet stagger-1">
-          <div className="kpi-label">Active Projects</div>
-          <div className="kpi-value">{active}</div>
-          <div className="kpi-change">Across all teams</div>
-        </div>
-        <div className="card kpi-card kpi-blue stagger-2">
-          <div className="kpi-label">Tasks Completed</div>
-          <div className="kpi-value">{doneTasks} / {totalTasks}</div>
-          <div className="kpi-change">Across all projects</div>
-        </div>
-        <div className="card kpi-card kpi-emerald stagger-3">
-          <div className="kpi-label">On Track</div>
-          <div className="kpi-value">{onTrackPct === null ? '—' : `${onTrackPct}%`}</div>
-          <div className="kpi-change">On or ahead of schedule</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="Active projects" value={active} caption={<><strong>{projects.length}</strong> in total</>} tone="accent" icon="projects" />
+        <Stat index={1} label="Tasks completed" value={doneTasks} caption={<>of <strong>{totalTasks}</strong> across all projects</>} tone="info" icon="check" />
+        <Stat index={2} label="On track" value={onTrackPct ?? 0} display={onTrackPct === null ? '—' : undefined} format={(v) => `${Math.round(v)}%`} caption="Completed, or not yet due" tone="success" icon="target" />
+      </Stats>
 
-      <div className="card">
+      <section className="card section" aria-label="Projects">
         {projects.length > 0 && (
-          <div className="card-header">
-            <div style={{ display: 'flex', gap: 12, flex: 1, flexWrap: 'wrap' }}>
-              <input className="tinput" placeholder="Search projects…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 300 }} />
-            </div>
+          <div className="toolbar">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by project or client…" />
+            <select className="tinput select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
+              <option value="all">All statuses</option>
+              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <span className="toolbar-meta">{filtered.length} of {projects.length}</span>
           </div>
         )}
 
@@ -113,67 +113,57 @@ export default function ProjectsPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Project</th><th>Client</th><th>Progress</th><th>Due date</th><th>Team</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th>
+                  <th>Project</th><th>Progress</th><th>Due</th><th>Team</th><th>Status</th>
+                  <th className="actions"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((p) => (
-                  <tr key={p.id}>
-                    <td className="font-semibold">{p.name}</td>
-                    <td>{p.client || '—'}</td>
-                    <td style={{ minWidth: 200 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div className="progress" style={{ flex: 1 }}>
-                          <div className="progress-bar" style={{ width: `${p.progress}%`, background: p.progress === 100 ? 'var(--emerald-500)' : 'var(--violet-500)' }} />
+                {filtered.map((p, i) => {
+                  const late = p.status !== 'Completed' && !!p.dueDate && p.dueDate < today;
+                  return (
+                    <tr key={p.id} style={stagger(i)}>
+                      <td>
+                        <div className="cell-main">{p.name}</div>
+                        <div className="cell-sub">{p.client || 'Internal'}</div>
+                      </td>
+                      <td style={{ minWidth: 200 }}>
+                        <div className="meter-row">
+                          <div className={`meter${p.progress >= 100 ? ' done' : ''}`}>
+                            <i style={{ '--v': Math.min(100, p.progress) / 100 } as React.CSSProperties} />
+                          </div>
+                          <span className="num">{p.progress}%</span>
                         </div>
-                        <span className="text-xs font-bold">{p.progress}%</span>
-                      </div>
-                    </td>
-                    <td>{p.dueDate || '—'}</td>
-                    <td>
-                      {p.team.length === 0 ? (
-                        <span className="text-muted">—</span>
-                      ) : (
-                        <div style={{ display: 'flex' }}>
-                          {p.team.map((member, i) => (
-                            <div
-                              key={i}
-                              className="avatar avatar-sm"
-                              style={{
-                                marginLeft: i > 0 ? -8 : 0,
-                                background: 'var(--violet-500)',
-                                color: '#fff',
-                                border: '2px solid var(--surface)',
-                              }}
-                              title={member}
-                            >
-                              {member}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`badge ${
-                        p.status === 'Completed' ? 'badge-success' :
-                        p.status === 'In Progress' ? 'badge-primary' :
-                        p.status === 'On Hold' ? 'badge-warning' :
-                        'badge-neutral'
-                      }`}>
-                        {p.status}
-                      </span>
-                    </td>
-                    <td><RowActions onEdit={() => openEdit(p)} onDelete={() => setDeleting(p)} /></td>
-                  </tr>
-                ))}
+                      </td>
+                      <td style={late ? { color: 'var(--danger)', fontWeight: 500 } : undefined} className={late ? '' : 'muted'}>
+                        {shortDate(p.dueDate)}{late && <span className="sr-only"> (overdue)</span>}
+                      </td>
+                      <td>
+                        {p.team.length === 0 ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <div className="avatar-stack" aria-label={`Team: ${p.team.join(', ')}`}>
+                            {p.team.slice(0, 4).map((member, j) => (
+                              <span key={j} className="avatar avatar-sm filled" style={{ background: 'var(--ink-2)', color: 'var(--paper)', ...stagger(j) }} title={member}>
+                                {member}
+                              </span>
+                            ))}
+                            {p.team.length > 4 && <span className="avatar avatar-sm" style={stagger(4)}>+{p.team.length - 4}</span>}
+                          </div>
+                        )}
+                      </td>
+                      <td><StatusBadge status={p.status} /></td>
+                      <td className="actions"><RowActions label={p.name} onEdit={() => openEdit(p)} onDelete={() => setDeleting(p)} /></td>
+                    </tr>
+                  );
+                })}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32 }} className="text-muted">No projects match your filters.</td></tr>
+                  <tr className="empty-row"><td colSpan={6}>No projects match these filters.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {modalOpen && (
         <RecordModal
@@ -187,7 +177,7 @@ export default function ProjectsPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete project?"
+          title="Delete this project?"
           message={`“${deleting.name}” will be removed from your projects. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

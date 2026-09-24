@@ -1,11 +1,11 @@
 {
-  "name": "Erpixa — Business Management Platform",
+  "name": "Erpixa — The whole business, in one ledger",
   "short_name": "Erpixa",
-  "description": "Intelligent Enterprise Management Platform. CRM, Sales, Inventory, Accounting, HR, Projects, Manufacturing and more.",
+  "description": "CRM, sales, inventory, accounting, HR, projects, manufacturing, helpdesk and marketing in one workspace.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F8FAFC",
-  "theme_color": "#4F46E5",
+  "background_color": "#F2F4F1",
+  "theme_color": "#0B1719",
   "icons": [
     {
       "src": "/favicon.svg",

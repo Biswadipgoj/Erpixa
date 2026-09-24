@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useAuthStore, useUIStore } from '../store';
+import Icon from '../components/ui/Icon';
+import AuthCover from '../components/ui/AuthCover';
 
 /**
  * Shown when the user arrives via a password-recovery email link
@@ -32,61 +34,46 @@ export default function ResetPasswordPage() {
   };
 
   return (
-    <div className="onboarding-page">
-      <div className="onboarding-card" style={{ maxWidth: 440 }}>
-        <div className="onboarding-header">
-          <div style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: '1.3rem', color: 'var(--text-primary)' }}>
-            Choose a new password
-          </div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 4 }}>
-            You followed a password-reset link. Set a new password to continue.
-          </div>
-        </div>
-        <form onSubmit={handleSubmit}>
-          <div className="onboarding-body">
-            <div className="input-wrap">
-              <label className="input-label" htmlFor="new-password">New password</label>
-              <input
-                id="new-password"
-                className="tinput"
-                type={show ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="new-password"
-                autoFocus
-              />
+    <div className="auth">
+      <AuthCover compact />
+      <main className="auth-main">
+        <div className="auth-form-wrap">
+          <h1 className="auth-title">Choose a new password</h1>
+          <p className="auth-sub">You followed a reset link. Set a new password to get back into your workspace.</p>
+          <form onSubmit={handleSubmit} className="auth-stack" style={{ marginTop: 28 }} noValidate>
+            <div className="field">
+              <label className="field-label" htmlFor="new-password">New password</label>
+              <div className="input-affix">
+                <span className="affix-icon"><Icon name="lock" size={16} /></span>
+                <input id="new-password" className="tinput tinput-lg" type={show ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" autoFocus placeholder="At least 8 characters" />
+              </div>
             </div>
-            <div className="input-wrap">
-              <label className="input-label" htmlFor="confirm-password">Confirm password</label>
-              <input
-                id="confirm-password"
-                className="tinput"
-                type={show ? 'text' : 'password'}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                autoComplete="new-password"
-              />
+            <div className="field">
+              <label className="field-label" htmlFor="confirm-password">Confirm password</label>
+              <div className="input-affix">
+                <span className="affix-icon"><Icon name="lock" size={16} /></span>
+                <input id="confirm-password" className="tinput tinput-lg" type={show ? 'text' : 'password'} value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" placeholder="Re-enter the password" aria-invalid={(confirm.length > 0 && confirm !== password) || undefined} />
+              </div>
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 'var(--t-sm)', color: 'var(--ink-2)', cursor: 'pointer' }}>
+              <span className="switch">
+                <input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} />
+                <span className="switch-track" />
+              </span>
               Show passwords
             </label>
             {error && (
-              <div role="alert" style={{ padding: '10px 14px', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 10, color: 'var(--danger)', fontSize: '0.85rem' }}>
-                {error}
-              </div>
+              <div role="alert" className="notice notice-danger"><Icon name="alert" size={16} /><span className="notice-text">{error}</span></div>
             )}
-          </div>
-          <div className="onboarding-footer">
-            <button type="button" className="btn btn-ghost" onClick={signOut} disabled={saving}>
-              Cancel &amp; sign out
+            <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={saving}>
+              {saving ? <><Icon name="spark" size={16} className="spin" /> Saving…</> : <><Icon name="check" size={16} strokeWidth={2.2} /> Update password</>}
             </button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Saving…' : 'Update password'}
+            <button type="button" className="btn btn-ghost btn-block" onClick={signOut} disabled={saving}>
+              Cancel and sign out
             </button>
-          </div>
-        </form>
-      </div>
+          </form>
+        </div>
+      </main>
     </div>
   );
 }

@@ -1,13 +1,20 @@
 import { useState } from 'react';
-import { useCurrencyStore, useUIStore } from '../store';
+import { useUIStore } from '../store';
 import { useDataStore, generateDocNumber } from '../store/dataStore';
 import type { SalesOrder } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput, StatusBadge } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { SALES_ORDER_FIELDS } from '../lib/recordFields';
+import { moduleById } from '../lib/modules';
+import { shortDate } from '../lib/format';
+import { stagger } from '../lib/motion';
+import { useMoney } from '../lib/useMoney';
+
+const STATUSES = ['Draft', 'Confirmed', 'Invoiced', 'Done', 'Cancelled'];
 
 export default function SalesPage() {
-  const formatMoney = useCurrencyStore((s) => s.formatMoney);
+  const formatMoney = useMoney();
   const salesOrders = useDataStore((s) => s.salesOrders);
   const addRecord = useDataStore((s) => s.addRecord);
   const updateRecord = useDataStore((s) => s.updateRecord);
@@ -21,23 +28,21 @@ export default function SalesPage() {
   const [deleting, setDeleting] = useState<SalesOrder | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const q = search.toLowerCase();
   const filtered = salesOrders.filter((so) => {
-    const q = search.toLowerCase();
     const matchesSearch =
       so.customer.toLowerCase().includes(q) ||
       (so.number || so.id).toLowerCase().includes(q) ||
       so.salesperson.toLowerCase().includes(q);
-    const matchesStatus = status === 'all' || so.status === status;
-    return matchesSearch && matchesStatus;
+    return matchesSearch && (status === 'all' || so.status === status);
   });
 
-  const confirmedRev = salesOrders
-    .filter((so) => ['Confirmed', 'Invoiced', 'Done'].includes(so.status))
-    .reduce((a, b) => a + Number(b.total), 0);
-  const openQuotes = salesOrders
-    .filter((so) => so.status === 'Draft')
-    .reduce((a, b) => a + Number(b.total), 0);
+  const confirmed = salesOrders.filter((so) => ['Confirmed', 'Invoiced', 'Done'].includes(so.status));
+  const confirmedRev = confirmed.reduce((a, b) => a + Number(b.total), 0);
+  const drafts = salesOrders.filter((so) => so.status === 'Draft');
+  const openQuotes = drafts.reduce((a, b) => a + Number(b.total), 0);
   const ordersToInvoice = salesOrders.filter((so) => so.status === 'Confirmed').length;
+  const filteredTotal = filtered.reduce((a, b) => a + Number(b.total), 0);
 
   const openCreate = () => { setEditing(null); setModalOpen(true); };
   const openEdit = (so: SalesOrder) => { setEditing(so); setModalOpen(true); };
@@ -75,46 +80,31 @@ export default function SalesPage() {
   };
 
   return (
-    <div className="fade-in">
+    <div className="page">
       <PageHeader
-        title="Sales Orders"
-        subtitle="Track and manage customer orders and quotations."
+        eyebrow={moduleById('sales').group}
+        icon="sales"
+        title="Sales orders"
+        subtitle={moduleById('sales').blurb}
         actionLabel="New order"
         onAction={openCreate}
       />
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-emerald stagger-1">
-          <div className="kpi-label">Confirmed Revenue</div>
-          <div className="kpi-value">{formatMoney(confirmedRev)}</div>
-          <div className="kpi-change">Confirmed/Invoiced/Done</div>
-        </div>
-        <div className="card kpi-card kpi-cyan stagger-2">
-          <div className="kpi-label">Open Quotations</div>
-          <div className="kpi-value">{formatMoney(openQuotes)}</div>
-          <div className="kpi-change">Draft orders</div>
-        </div>
-        <div className="card kpi-card kpi-blue stagger-3">
-          <div className="kpi-label">Orders to Invoice</div>
-          <div className="kpi-value">{ordersToInvoice}</div>
-          <div className="kpi-change">Awaiting invoice</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="Confirmed revenue" value={confirmedRev} format={(v) => formatMoney(v)} caption={<><strong>{confirmed.length}</strong> confirmed, invoiced or done</>} tone="success" icon="trend-up" />
+        <Stat index={1} label="Open quotations" value={openQuotes} format={(v) => formatMoney(v)} caption={<><strong>{drafts.length}</strong> draft order{drafts.length === 1 ? '' : 's'}</>} tone="info" icon="edit" />
+        <Stat index={2} label="Ready to invoice" value={ordersToInvoice} caption="Confirmed, not yet invoiced" tone="warning" icon="receipt" />
+      </Stats>
 
-      <div className="card">
+      <section className="card section" aria-label="Sales orders">
         {salesOrders.length > 0 && (
-          <div className="card-header">
-            <div style={{ display: 'flex', gap: 12, flex: 1, flexWrap: 'wrap' }}>
-              <input className="tinput" placeholder="Search orders…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 300 }} />
-              <select className="tinput select" style={{ maxWidth: 180 }} value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="all">All statuses</option>
-                <option value="Draft">Draft</option>
-                <option value="Confirmed">Confirmed</option>
-                <option value="Invoiced">Invoiced</option>
-                <option value="Done">Done</option>
-                <option value="Cancelled">Cancelled</option>
-              </select>
-            </div>
+          <div className="toolbar">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by customer, order or salesperson…" />
+            <select className="tinput select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
+              <option value="all">All statuses</option>
+              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <span className="toolbar-meta">{filtered.length} of {salesOrders.length} · {formatMoney(filteredTotal)}</span>
           </div>
         )}
 
@@ -131,38 +121,30 @@ export default function SalesPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Order #</th><th>Date</th><th>Customer</th><th>Salesperson</th><th>Total</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th>
+                  <th>Order</th><th>Customer</th><th>Date</th><th>Salesperson</th><th className="num">Total</th><th>Status</th>
+                  <th className="actions"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((so) => (
-                  <tr key={so.id}>
-                    <td className="font-semibold">{so.number || so.id}</td>
-                    <td>{so.date || '—'}</td>
-                    <td className="font-semibold">{so.customer}</td>
-                    <td>{so.salesperson || '—'}</td>
-                    <td className="font-semibold">{formatMoney(so.total)}</td>
-                    <td>
-                      <span className={`badge ${
-                        so.status === 'Confirmed' ? 'badge-success' :
-                        so.status === 'Invoiced' || so.status === 'Done' ? 'badge-info' :
-                        so.status === 'Cancelled' ? 'badge-danger' :
-                        'badge-warning'
-                      }`}>
-                        {so.status}
-                      </span>
-                    </td>
-                    <td><RowActions onEdit={() => openEdit(so)} onDelete={() => setDeleting(so)} /></td>
+                {filtered.map((so, i) => (
+                  <tr key={so.id} style={stagger(i)}>
+                    <td><span className="docno">{so.number || so.id.slice(0, 8)}</span></td>
+                    <td className="cell-main">{so.customer}</td>
+                    <td className="muted">{shortDate(so.date)}</td>
+                    <td>{so.salesperson || <span className="muted">—</span>}</td>
+                    <td className="num money">{formatMoney(so.total)}</td>
+                    <td><StatusBadge status={so.status} /></td>
+                    <td className="actions"><RowActions label={so.number || so.customer} onEdit={() => openEdit(so)} onDelete={() => setDeleting(so)} /></td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32 }} className="text-muted">No orders match your filters.</td></tr>
+                  <tr className="empty-row"><td colSpan={7}>No orders match these filters.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {modalOpen && (
         <RecordModal
@@ -176,7 +158,7 @@ export default function SalesPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete order?"
+          title="Delete this order?"
           message={`“${deleting.number || deleting.id}” will be removed from your sales orders. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

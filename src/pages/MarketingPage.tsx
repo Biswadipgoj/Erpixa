@@ -1,20 +1,19 @@
 import { useState } from 'react';
-import { useCurrencyStore, useUIStore } from '../store';
+import { useUIStore } from '../store';
 import { useDataStore } from '../store/dataStore';
 import type { Campaign } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput, StatusBadge } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { CAMPAIGN_FIELDS } from '../lib/recordFields';
+import { moduleById } from '../lib/modules';
+import { stagger } from '../lib/motion';
+import { useMoney } from '../lib/useMoney';
 
-const STATUS_BADGE: Record<string, string> = {
-  Active: 'badge-success',
-  Paused: 'badge-warning',
-  Completed: 'badge-neutral',
-  Draft: 'badge-soft-primary',
-};
+const STATUSES = ['Active', 'Paused', 'Completed', 'Draft'];
 
 export default function MarketingPage() {
-  const formatMoney = useCurrencyStore((s) => s.formatMoney);
+  const formatMoney = useMoney();
   const campaigns = useDataStore((s) => s.campaigns);
   const addRecord = useDataStore((s) => s.addRecord);
   const updateRecord = useDataStore((s) => s.updateRecord);
@@ -28,16 +27,14 @@ export default function MarketingPage() {
   const [deleting, setDeleting] = useState<Campaign | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const filtered = campaigns.filter((c) => {
-    const q = search.toLowerCase();
-    const matchesSearch = c.name.toLowerCase().includes(q) || c.channel.toLowerCase().includes(q);
-    const matchesStatus = status === 'all' || c.status === status;
-    return matchesSearch && matchesStatus;
-  });
+  const q = search.toLowerCase();
+  const filtered = campaigns.filter((c) =>
+    (c.name.toLowerCase().includes(q) || c.channel.toLowerCase().includes(q)) && (status === 'all' || c.status === status));
 
   const activeCount = campaigns.filter((c) => c.status === 'Active').length;
   const totalLeads = campaigns.reduce((sum, c) => sum + c.leadsGenerated, 0);
   const totalSpend = campaigns.reduce((sum, c) => sum + c.spent, 0);
+  const costPerLead = totalLeads > 0 ? totalSpend / totalLeads : null;
 
   const openCreate = () => { setEditing(null); setModalOpen(true); };
   const openEdit = (c: Campaign) => { setEditing(c); setModalOpen(true); };
@@ -73,45 +70,31 @@ export default function MarketingPage() {
   };
 
   return (
-    <div className="fade-in">
+    <div className="page">
       <PageHeader
+        eyebrow={moduleById('marketing').group}
+        icon="marketing"
         title="Marketing"
-        subtitle="Plan campaigns, track spend, and measure lead generation."
+        subtitle={moduleById('marketing').blurb}
         actionLabel="New campaign"
         onAction={openCreate}
       />
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-pink stagger-1">
-          <div className="kpi-label">Active Campaigns</div>
-          <div className="kpi-value">{activeCount}</div>
-          <div className="kpi-change">{campaigns.length} total</div>
-        </div>
-        <div className="card kpi-card kpi-purple stagger-2">
-          <div className="kpi-label">Leads Generated</div>
-          <div className="kpi-value">{totalLeads}</div>
-          <div className="kpi-change">Across all campaigns</div>
-        </div>
-        <div className="card kpi-card kpi-blue stagger-3">
-          <div className="kpi-label">Total Spend</div>
-          <div className="kpi-value">{formatMoney(totalSpend)}</div>
-          <div className="kpi-change">Campaign budget used</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="Active campaigns" value={activeCount} caption={<><strong>{campaigns.length}</strong> in total</>} tone="accent" icon="megaphone" />
+        <Stat index={1} label="Leads generated" value={totalLeads} caption={costPerLead === null ? 'Across all campaigns' : <><strong>{formatMoney(costPerLead)}</strong> per lead</>} tone="success" icon="crm" />
+        <Stat index={2} label="Spend to date" value={totalSpend} format={(v) => formatMoney(v)} caption={<>of <strong>{formatMoney(campaigns.reduce((s, c) => s + c.budget, 0))}</strong> budgeted</>} tone="info" icon="receipt" />
+      </Stats>
 
-      <div className="card">
+      <section className="card section" aria-label="Campaigns">
         {campaigns.length > 0 && (
-          <div className="card-header">
-            <div style={{ display: 'flex', gap: 12, flex: 1, flexWrap: 'wrap' }}>
-              <input className="tinput" placeholder="Search campaigns…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 300 }} />
-              <select className="tinput select" style={{ maxWidth: 180 }} value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="all">All statuses</option>
-                <option value="Active">Active</option>
-                <option value="Paused">Paused</option>
-                <option value="Completed">Completed</option>
-                <option value="Draft">Draft</option>
-              </select>
-            </div>
+          <div className="toolbar">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by campaign or channel…" />
+            <select className="tinput select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
+              <option value="all">All statuses</option>
+              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <span className="toolbar-meta">{filtered.length} of {campaigns.length}</span>
           </div>
         )}
 
@@ -119,7 +102,7 @@ export default function MarketingPage() {
           <EmptyState
             icon="megaphone"
             title="No campaigns yet"
-            message="Create your first campaign to track spend and lead generation."
+            message="Create your first campaign to track spend against the leads it brings in."
             actionLabel="New campaign"
             onAction={openCreate}
           />
@@ -128,31 +111,45 @@ export default function MarketingPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Campaign</th><th>Channel</th><th>Status</th><th>Budget</th><th>Spent</th><th>Leads</th><th style={{ textAlign: 'right' }}>Actions</th>
+                  <th>Campaign</th><th>Status</th><th>Budget used</th><th className="num">Spent / budget</th><th className="num">Leads</th>
+                  <th className="actions"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((c) => (
-                  <tr key={c.id}>
-                    <td className="font-semibold">{c.name}</td>
-                    <td>{c.channel || '—'}</td>
-                    <td>
-                      <span className={`badge ${STATUS_BADGE[c.status] ?? 'badge-neutral'}`}>{c.status}</span>
-                    </td>
-                    <td className="font-semibold">{formatMoney(c.budget)}</td>
-                    <td className="font-semibold">{formatMoney(c.spent)}</td>
-                    <td className="font-semibold">{c.leadsGenerated}</td>
-                    <td><RowActions onEdit={() => openEdit(c)} onDelete={() => setDeleting(c)} /></td>
-                  </tr>
-                ))}
+                {filtered.map((c, i) => {
+                  const used = c.budget > 0 ? c.spent / c.budget : 0;
+                  return (
+                    <tr key={c.id} style={stagger(i)}>
+                      <td>
+                        <div className="cell-main">{c.name}</div>
+                        <div className="cell-sub">{c.channel || 'No channel'}</div>
+                      </td>
+                      <td><StatusBadge status={c.status} /></td>
+                      <td style={{ minWidth: 190 }}>
+                        <div className="meter-row" title={`${formatMoney(c.spent)} of ${formatMoney(c.budget)}`}>
+                          <div className="meter">
+                            <i style={{ '--v': Math.min(1, used), background: used > 1 ? 'var(--danger)' : undefined } as React.CSSProperties} />
+                          </div>
+                          <span className="num">{c.budget > 0 ? `${Math.round(used * 100)}%` : '—'}</span>
+                        </div>
+                      </td>
+                      <td className="num">
+                        <div className="money">{formatMoney(c.spent)}</div>
+                        <div className="cell-sub">of {formatMoney(c.budget)}</div>
+                      </td>
+                      <td className="num">{c.leadsGenerated.toLocaleString()}</td>
+                      <td className="actions"><RowActions label={c.name} onEdit={() => openEdit(c)} onDelete={() => setDeleting(c)} /></td>
+                    </tr>
+                  );
+                })}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32 }} className="text-muted">No campaigns match your filters.</td></tr>
+                  <tr className="empty-row"><td colSpan={6}>No campaigns match these filters.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {modalOpen && (
         <RecordModal
@@ -166,7 +163,7 @@ export default function MarketingPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete campaign?"
+          title="Delete this campaign?"
           message={`“${deleting.name}” will be removed from your marketing records. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

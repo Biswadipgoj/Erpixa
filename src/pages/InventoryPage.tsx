@@ -1,13 +1,17 @@
 import { useMemo, useState } from 'react';
-import { useCurrencyStore, useUIStore } from '../store';
+import { useUIStore } from '../store';
 import { useDataStore } from '../store/dataStore';
 import type { Product } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput, StatusBadge } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { PRODUCT_FIELDS } from '../lib/recordFields';
+import { moduleById } from '../lib/modules';
+import { stagger } from '../lib/motion';
+import { useMoney } from '../lib/useMoney';
 
 export default function InventoryPage() {
-  const formatMoney = useCurrencyStore((s) => s.formatMoney);
+  const formatMoney = useMoney();
   const products = useDataStore((s) => s.products);
   const addRecord = useDataStore((s) => s.addRecord);
   const updateRecord = useDataStore((s) => s.updateRecord);
@@ -26,15 +30,15 @@ export default function InventoryPage() {
     [products],
   );
 
+  const q = search.toLowerCase();
   const filtered = products.filter((p) => {
-    const q = search.toLowerCase();
     const matchesSearch = p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
-    const matchesCat = category === 'all' || p.category === category;
-    return matchesSearch && matchesCat;
+    return matchesSearch && (category === 'all' || p.category === category);
   });
 
   const totalValue = products.reduce((sum, p) => sum + p.qty * p.cost, 0);
   const lowStock = products.filter((p) => p.status !== 'In Stock').length;
+  const outOfStock = products.filter((p) => p.status === 'Out of Stock').length;
 
   const openCreate = () => { setEditing(null); setModalOpen(true); };
   const openEdit = (p: Product) => { setEditing(p); setModalOpen(true); };
@@ -69,42 +73,31 @@ export default function InventoryPage() {
   };
 
   return (
-    <div className="fade-in">
+    <div className="page">
       <PageHeader
+        eyebrow={moduleById('inventory').group}
+        icon="inventory"
         title="Inventory"
-        subtitle="Track stock levels, valuations, and reorder points."
+        subtitle={moduleById('inventory').blurb}
         actionLabel="New product"
         onAction={openCreate}
       />
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-amber stagger-1">
-          <div className="kpi-label">Total Products</div>
-          <div className="kpi-value">{products.length}</div>
-          <div className="kpi-change">{categories.length} categor{categories.length === 1 ? 'y' : 'ies'}</div>
-        </div>
-        <div className="card kpi-card kpi-rose stagger-2">
-          <div className="kpi-label">Low / Out of Stock</div>
-          <div className="kpi-value">{lowStock}</div>
-          <div className="kpi-change">Needs reordering</div>
-        </div>
-        <div className="card kpi-card kpi-emerald stagger-3">
-          <div className="kpi-label">Inventory Value</div>
-          <div className="kpi-value">{formatMoney(totalValue)}</div>
-          <div className="kpi-change">At unit cost</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="Products" value={products.length} caption={<><strong>{categories.length}</strong> categor{categories.length === 1 ? 'y' : 'ies'}</>} tone="accent" icon="box" />
+        <Stat index={1} label="Low or out of stock" value={lowStock} caption={<><strong>{outOfStock}</strong> completely out</>} tone={lowStock > 0 ? 'warning' : 'neutral'} icon="alert" />
+        <Stat index={2} label="Stock value" value={totalValue} format={(v) => formatMoney(v)} caption="On hand, at unit cost" tone="success" icon="warehouse" />
+      </Stats>
 
-      <div className="card">
+      <section className="card section" aria-label="Products">
         {products.length > 0 && (
-          <div className="card-header">
-            <div style={{ display: 'flex', gap: 12, flex: 1, flexWrap: 'wrap' }}>
-              <input className="tinput" placeholder="Search products…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 300 }} />
-              <select className="tinput select" style={{ maxWidth: 180 }} value={category} onChange={(e) => setCategory(e.target.value)}>
-                <option value="all">All categories</option>
-                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
+          <div className="toolbar">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by name, category or SKU…" />
+            <select className="tinput select" value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Filter by category">
+              <option value="all">All categories</option>
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <span className="toolbar-meta">{filtered.length} of {products.length}</span>
           </div>
         )}
 
@@ -121,33 +114,42 @@ export default function InventoryPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Product</th><th>Category</th><th>SKU</th><th>On hand</th><th>Price</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th>
+                  <th>Product</th><th>SKU</th><th>Stock level</th><th className="num">On hand</th><th className="num">Price</th><th>Status</th>
+                  <th className="actions"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((p) => (
-                  <tr key={p.id}>
-                    <td className="font-semibold">{p.name}</td>
-                    <td>{p.category || '—'}</td>
-                    <td className="text-muted">{p.sku || '—'}</td>
-                    <td className="font-semibold">{p.qty}</td>
-                    <td className="font-semibold">{formatMoney(p.price)}</td>
-                    <td>
-                      <span className={`badge ${p.status === 'In Stock' ? 'badge-success' : p.status === 'Out of Stock' ? 'badge-danger' : 'badge-warning'}`}>
-                        {p.status}
-                      </span>
-                    </td>
-                    <td><RowActions onEdit={() => openEdit(p)} onDelete={() => setDeleting(p)} /></td>
-                  </tr>
-                ))}
+                {filtered.map((p, i) => {
+                  // Fill the meter against twice the reorder level so "healthy" reads as roughly half full.
+                  const ceiling = Math.max(1, p.reorderLevel * 2);
+                  const level = Math.min(1, p.qty / ceiling);
+                  return (
+                    <tr key={p.id} style={stagger(i)}>
+                      <td>
+                        <div className="cell-main">{p.name}</div>
+                        <div className="cell-sub">{p.category || 'Uncategorised'}</div>
+                      </td>
+                      <td><span className="docno">{p.sku || '—'}</span></td>
+                      <td>
+                        <div className="meter" style={{ width: 120, ...stagger(i) }} title={`Reorder at ${p.reorderLevel}`}>
+                          <i style={{ '--v': level, background: p.status === 'In Stock' ? undefined : p.status === 'Out of Stock' ? 'var(--danger)' : 'var(--warning)' } as React.CSSProperties} />
+                        </div>
+                      </td>
+                      <td className="num money">{p.qty.toLocaleString()}</td>
+                      <td className="num">{formatMoney(p.price)}</td>
+                      <td><StatusBadge status={p.status} /></td>
+                      <td className="actions"><RowActions label={p.name} onEdit={() => openEdit(p)} onDelete={() => setDeleting(p)} /></td>
+                    </tr>
+                  );
+                })}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32 }} className="text-muted">No products match your filters.</td></tr>
+                  <tr className="empty-row"><td colSpan={7}>No products match these filters.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {modalOpen && (
         <RecordModal
@@ -161,7 +163,7 @@ export default function InventoryPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete product?"
+          title="Delete this product?"
           message={`“${deleting.name}” will be removed from your inventory. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

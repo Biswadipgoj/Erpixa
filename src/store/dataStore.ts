@@ -60,7 +60,8 @@ type Row = Record<string, unknown>;
 const str = (v: unknown): string => (v == null ? '' : String(v));
 const num = (v: unknown): number => (typeof v === 'number' ? v : Number(v ?? 0) || 0);
 
-const AVATAR_COLORS = ['#4F46E5', '#7C3AED', '#059669', '#DC2626', '#D97706', '#DB2777', '#0D9488', '#2563EB'];
+// Deep, muted inks that all hold white initials above 4.5:1.
+const AVATAR_COLORS = ['#0A5C66', '#3D5A80', '#6B4E71', '#7A4E2D', '#2F6B4F', '#8A3B3B', '#4B5D2E', '#355C7D'];
 
 function initialsOf(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || '?';

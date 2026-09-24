@@ -369,23 +369,36 @@ interface UIState {
   aiPanelOpen: boolean;
   currentModule: string;
   toasts: Toast[];
-  theme: 'aurora' | 'midnight' | 'enterprise';
+  /** 'system' follows the OS; 'light'/'dark' are explicit choices. */
+  theme: ThemePref;
   toggleSidebar: () => void;
   setMobileNavOpen: (v: boolean) => void;
   setAppSwitcherOpen: (v: boolean) => void;
   setNotifPanelOpen: (v: boolean) => void;
   setAIPanelOpen: (v: boolean) => void;
   setCurrentModule: (m: string) => void;
-  setTheme: (t: 'aurora' | 'midnight' | 'enterprise') => void;
+  setTheme: (t: ThemePref) => void;
   addToast: (toast: Omit<Toast, 'id'>) => void;
   removeToast: (id: string) => void;
 }
 
-const getStoredTheme = (): 'aurora' | 'midnight' | 'enterprise' => {
-  const t = localStorage.getItem('erpixa-theme');
-  if (t === 'midnight' || t === 'enterprise') return t;
-  return 'aurora';
+export type ThemePref = 'light' | 'dark' | 'system';
+
+/** Reads the stored theme, mapping the legacy 'aurora'/'midnight' names. */
+const getStoredTheme = (): ThemePref => {
+  try {
+    const t = localStorage.getItem('erpixa-theme');
+    if (t === 'dark' || t === 'midnight') return 'dark';
+    if (t === 'light' || t === 'aurora' || t === 'enterprise') return 'light';
+  } catch { /* storage unavailable */ }
+  return 'system';
 };
+
+/** Stamps the explicit theme on <html>; 'system' removes it so CSS follows the OS. */
+export function applyTheme(t: ThemePref): void {
+  if (t === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+}
 
 let toastId = 0;
 export const useUIStore = create<UIState>((set) => ({
@@ -404,9 +417,9 @@ export const useUIStore = create<UIState>((set) => ({
   setAIPanelOpen: (v) => set({ aiPanelOpen: v, notifPanelOpen: false }),
   setCurrentModule: (m) => set({ currentModule: m }),
   setTheme: (t) => {
-    localStorage.setItem('erpixa-theme', t);
+    try { localStorage.setItem('erpixa-theme', t); } catch { /* storage unavailable */ }
     set({ theme: t });
-    document.documentElement.setAttribute('data-theme', t);
+    applyTheme(t);
   },
   addToast: (toast) => {
     const id = String(++toastId);
