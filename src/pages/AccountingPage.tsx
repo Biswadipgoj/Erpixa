@@ -1,13 +1,18 @@
 import { useState } from 'react';
-import { useCurrencyStore, useUIStore } from '../store';
+import { useUIStore } from '../store';
 import { useDataStore, generateDocNumber } from '../store/dataStore';
 import type { Invoice } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput, StatusBadge } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { INVOICE_FIELDS } from '../lib/recordFields';
+import { moduleById } from '../lib/modules';
+import { shortDate } from '../lib/format';
+import { stagger } from '../lib/motion';
+import { useMoney } from '../lib/useMoney';
 
 export default function AccountingPage() {
-  const formatMoney = useCurrencyStore((s) => s.formatMoney);
+  const formatMoney = useMoney();
   const invoices = useDataStore((s) => s.invoices);
   const addRecord = useDataStore((s) => s.addRecord);
   const updateRecord = useDataStore((s) => s.updateRecord);
@@ -21,14 +26,14 @@ export default function AccountingPage() {
   const [deleting, setDeleting] = useState<Invoice | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const q = search.toLowerCase();
   const filtered = invoices.filter((inv) => {
-    const q = search.toLowerCase();
     const matchesSearch = inv.customer.toLowerCase().includes(q) || inv.number.toLowerCase().includes(q);
-    const matchesPayment = payment === 'all' || inv.payment === payment;
-    return matchesSearch && matchesPayment;
+    return matchesSearch && (payment === 'all' || inv.payment === payment);
   });
 
   const thisMonth = new Date().toISOString().slice(0, 7);
+  const monthName = new Date().toLocaleDateString(undefined, { month: 'long' });
   const unpaidInvoices = invoices.filter((i) => i.payment !== 'Paid');
   const overdueInvoices = invoices.filter((i) => i.payment === 'Overdue');
   const outstanding = unpaidInvoices.reduce((a, i) => a + i.amount, 0);
@@ -36,6 +41,7 @@ export default function AccountingPage() {
   const paidThisMonth = invoices
     .filter((i) => i.payment === 'Paid' && i.date.slice(0, 7) === thisMonth)
     .reduce((a, i) => a + i.amount, 0);
+  const filteredTotal = filtered.reduce((a, i) => a + i.amount, 0);
 
   const openCreate = () => { setEditing(null); setModalOpen(true); };
   const openEdit = (inv: Invoice) => { setEditing(inv); setModalOpen(true); };
@@ -70,44 +76,33 @@ export default function AccountingPage() {
   };
 
   return (
-    <div className="fade-in">
+    <div className="page">
       <PageHeader
+        eyebrow={moduleById('accounting').group}
+        icon="accounting"
         title="Accounting"
-        subtitle="Manage invoices, bills, and track your financial health."
+        subtitle={moduleById('accounting').blurb}
         actionLabel="New invoice"
         onAction={openCreate}
       />
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-blue stagger-1">
-          <div className="kpi-label">Total Outstanding</div>
-          <div className="kpi-value">{formatMoney(outstanding)}</div>
-          <div className="kpi-change">Across {unpaidInvoices.length} unpaid invoice{unpaidInvoices.length === 1 ? '' : 's'}</div>
-        </div>
-        <div className="card kpi-card kpi-emerald stagger-2">
-          <div className="kpi-label">Paid This Month</div>
-          <div className="kpi-value">{formatMoney(paidThisMonth)}</div>
-          <div className="kpi-change">Collected in {thisMonth}</div>
-        </div>
-        <div className="card kpi-card kpi-rose stagger-3">
-          <div className="kpi-label">Overdue</div>
-          <div className="kpi-value">{formatMoney(overdue)}</div>
-          <div className="kpi-change">{overdueInvoices.length} invoice{overdueInvoices.length === 1 ? '' : 's'} past due</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="Outstanding" value={outstanding} format={(v) => formatMoney(v)} caption={<><strong>{unpaidInvoices.length}</strong> unpaid invoice{unpaidInvoices.length === 1 ? '' : 's'}</>} tone="warning" icon="hourglass" />
+        <Stat index={1} label={`Collected in ${monthName}`} value={paidThisMonth} format={(v) => formatMoney(v)} caption="Invoices marked paid this month" tone="success" icon="check" />
+        <Stat index={2} label="Overdue" value={overdue} format={(v) => formatMoney(v)} caption={<><strong>{overdueInvoices.length}</strong> past their due date</>} tone={overdue > 0 ? 'danger' : 'neutral'} icon="alert" />
+      </Stats>
 
-      <div className="card">
+      <section className="card section" aria-label="Invoices">
         {invoices.length > 0 && (
-          <div className="card-header">
-            <div style={{ display: 'flex', gap: 12, flex: 1, flexWrap: 'wrap' }}>
-              <input className="tinput" placeholder="Search invoices…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 300 }} />
-              <select className="tinput select" style={{ maxWidth: 150 }} value={payment} onChange={(e) => setPayment(e.target.value)}>
-                <option value="all">All payments</option>
-                <option value="Paid">Paid</option>
-                <option value="Unpaid">Unpaid</option>
-                <option value="Overdue">Overdue</option>
-              </select>
-            </div>
+          <div className="toolbar">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by customer or invoice number…" />
+            <select className="tinput select" value={payment} onChange={(e) => setPayment(e.target.value)} aria-label="Filter by payment">
+              <option value="all">All payments</option>
+              <option value="Paid">Paid</option>
+              <option value="Unpaid">Unpaid</option>
+              <option value="Overdue">Overdue</option>
+            </select>
+            <span className="toolbar-meta">{filtered.length} of {invoices.length} · {formatMoney(filteredTotal)}</span>
           </div>
         )}
 
@@ -124,38 +119,34 @@ export default function AccountingPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Invoice #</th><th>Date</th><th>Customer</th><th>Due date</th><th>Amount</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th>
+                  <th>Invoice</th><th>Customer</th><th>Issued</th><th>Due</th><th className="num">Amount</th><th>Status</th><th>Payment</th>
+                  <th className="actions"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((inv) => (
-                  <tr key={inv.id}>
-                    <td className="font-semibold">{inv.number || '—'}</td>
-                    <td>{inv.date || '—'}</td>
-                    <td className="font-semibold">{inv.customer}</td>
-                    <td>{inv.due || '—'}</td>
-                    <td className="font-semibold">{formatMoney(inv.amount)}</td>
+                {filtered.map((inv, i) => (
+                  <tr key={inv.id} style={stagger(i)}>
+                    <td><span className="docno">{inv.number || '—'}</span></td>
+                    <td className="cell-main">{inv.customer}</td>
+                    <td className="muted">{shortDate(inv.date)}</td>
+                    <td className={inv.payment === 'Overdue' ? '' : 'muted'} style={inv.payment === 'Overdue' ? { color: 'var(--danger)', fontWeight: 500 } : undefined}>{shortDate(inv.due)}</td>
+                    <td className="num money">{formatMoney(inv.amount)}</td>
+                    <td><StatusBadge status={inv.status} /></td>
                     <td>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <span className={`badge ${inv.status === 'Posted' ? 'badge-soft-primary' : inv.status === 'Cancelled' ? 'badge-danger' : 'badge-neutral'}`}>
-                          {inv.status}
-                        </span>
-                        {inv.payment === 'Paid' && <span className="badge badge-success">Paid</span>}
-                        {inv.payment === 'Overdue' && <span className="badge badge-danger">Overdue</span>}
-                        {inv.payment === 'Unpaid' && <span className="badge badge-warning">Unpaid</span>}
-                      </div>
+                      {/* Payment reads like a rubber stamp on the ledger line. */}
+                      <span className={`stamp ${inv.payment.toLowerCase()}`} style={stagger(i)}>{inv.payment}</span>
                     </td>
-                    <td><RowActions onEdit={() => openEdit(inv)} onDelete={() => setDeleting(inv)} /></td>
+                    <td className="actions"><RowActions label={inv.number || inv.customer} onEdit={() => openEdit(inv)} onDelete={() => setDeleting(inv)} /></td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32 }} className="text-muted">No invoices match your filters.</td></tr>
+                  <tr className="empty-row"><td colSpan={8}>No invoices match these filters.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {modalOpen && (
         <RecordModal
@@ -169,7 +160,7 @@ export default function AccountingPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete invoice?"
+          title="Delete this invoice?"
           message={`Invoice “${deleting.number || deleting.customer}” will be removed from your accounts. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

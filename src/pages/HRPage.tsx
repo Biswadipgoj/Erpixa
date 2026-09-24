@@ -3,9 +3,15 @@ import { useUIStore } from '../store';
 import { useDataStore } from '../store/dataStore';
 import type { Employee } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput, StatusBadge } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { EMPLOYEE_FIELDS } from '../lib/recordFields';
+import { moduleById } from '../lib/modules';
+import { shortDate } from '../lib/format';
+import { stagger } from '../lib/motion';
 import Icon from '../components/ui/Icon';
+
+const STATUS_DOT: Record<string, string> = { Active: 'var(--success)', 'On Leave': 'var(--warning)', Terminated: 'var(--danger)' };
 
 export default function HRPage() {
   const employees = useDataStore((s) => s.employees);
@@ -15,27 +21,29 @@ export default function HRPage() {
   const addToast = useUIStore((s) => s.addToast);
 
   const [search, setSearch] = useState('');
+  const [dept, setDept] = useState('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Employee | null>(null);
   const [deleting, setDeleting] = useState<Employee | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const filtered = employees.filter((e) => {
-    const q = search.toLowerCase();
-    return (
-      e.name.toLowerCase().includes(q) ||
-      e.role.toLowerCase().includes(q) ||
-      e.dept.toLowerCase().includes(q) ||
-      e.email.toLowerCase().includes(q)
-    );
-  });
-
-  const activeCount = employees.filter((e) => e.status === 'Active').length;
-  const onLeaveCount = employees.filter((e) => e.status === 'On Leave').length;
   const departments = useMemo(
     () => Array.from(new Set(employees.map((e) => e.dept).filter(Boolean))).sort(),
     [employees],
   );
+
+  const q = search.toLowerCase();
+  const filtered = employees.filter((e) => {
+    const matchesSearch =
+      e.name.toLowerCase().includes(q) ||
+      e.role.toLowerCase().includes(q) ||
+      e.dept.toLowerCase().includes(q) ||
+      e.email.toLowerCase().includes(q);
+    return matchesSearch && (dept === 'all' || e.dept === dept);
+  });
+
+  const activeCount = employees.filter((e) => e.status === 'Active').length;
+  const onLeaveCount = employees.filter((e) => e.status === 'On Leave').length;
 
   const openCreate = () => { setEditing(null); setModalOpen(true); };
   const openEdit = (e: Employee) => { setEditing(e); setModalOpen(true); };
@@ -70,38 +78,33 @@ export default function HRPage() {
   };
 
   return (
-    <div className="fade-in">
+    <div className="page">
       <PageHeader
-        title="Human Resources"
-        subtitle="Manage your team, track headcount, and keep records up to date."
+        eyebrow={moduleById('hr').group}
+        icon="hr"
+        title="Human resources"
+        subtitle={moduleById('hr').blurb}
         actionLabel="Add employee"
         onAction={openCreate}
       />
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-indigo stagger-1">
-          <div className="kpi-label">Total Headcount</div>
-          <div className="kpi-value">{employees.length}</div>
-          <div className="kpi-change">{departments.length} department{departments.length === 1 ? '' : 's'}</div>
-        </div>
-        <div className="card kpi-card kpi-emerald stagger-2">
-          <div className="kpi-label">Active</div>
-          <div className="kpi-value">{activeCount}</div>
-          <div className="kpi-change">Currently working</div>
-        </div>
-        <div className="card kpi-card kpi-amber stagger-3">
-          <div className="kpi-label">On Leave</div>
-          <div className="kpi-value">{onLeaveCount}</div>
-          <div className="kpi-change">Temporarily away</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="Headcount" value={employees.length} caption={<><strong>{departments.length}</strong> department{departments.length === 1 ? '' : 's'}</>} tone="accent" icon="hr" />
+        <Stat index={1} label="Active" value={activeCount} caption="Currently working" tone="success" icon="check" />
+        <Stat index={2} label="On leave" value={onLeaveCount} caption="Temporarily away" tone={onLeaveCount > 0 ? 'warning' : 'neutral'} icon="calendar" />
+      </Stats>
 
-      <div className="card">
+      <section className="card section" aria-label="Team directory">
         {employees.length > 0 && (
-          <div className="card-header">
-            <div style={{ display: 'flex', gap: 12, flex: 1, flexWrap: 'wrap' }}>
-              <input className="tinput" placeholder="Search employees…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 300 }} />
-            </div>
+          <div className="toolbar">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by name, title, department or email…" />
+            {departments.length > 1 && (
+              <select className="tinput select" value={dept} onChange={(e) => setDept(e.target.value)} aria-label="Filter by department">
+                <option value="all">All departments</option>
+                {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            )}
+            <span className="toolbar-meta">{filtered.length} of {employees.length}</span>
           </div>
         )}
 
@@ -113,48 +116,37 @@ export default function HRPage() {
             actionLabel="Add employee"
             onAction={openCreate}
           />
+        ) : filtered.length === 0 ? (
+          <div className="empty compact"><p className="empty-msg">No one matches these filters.</p></div>
         ) : (
-          <div className="card-body">
-            <div className="grid-auto">
-              {filtered.map((e) => (
-                <div key={e.id} className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', position: 'relative' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                      <div className="avatar avatar-lg" style={{ background: e.color, color: '#fff', flexShrink: 0 }}>
-                        {e.initials}
-                      </div>
-                      <div style={{ minWidth: 0 }}>
-                        <h3 className="font-bold" style={{ marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.name}</h3>
-                        <div className="text-sm font-semibold text-primary-color">{e.role || '—'}</div>
-                      </div>
-                    </div>
-                    <RowActions onEdit={() => openEdit(e)} onDelete={() => setDeleting(e)} />
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
-                    <span className="badge badge-neutral">{e.dept || 'Unassigned'}</span>
-                    <span className={`badge ${e.status === 'Active' ? 'badge-success' : e.status === 'Terminated' ? 'badge-danger' : 'badge-warning'}`}>
-                      {e.status}
-                    </span>
-                  </div>
-
-                  <div className="text-xs text-muted" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Icon name="mail" size={14} /> <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.email || '—'}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Icon name="phone" size={14} /> <span>{e.phone || '—'}</span>
-                    </div>
+          <div className="people">
+            {filtered.map((e, i) => (
+              <article key={e.id} className="card person lift reveal-host" style={stagger(i)}>
+                <div className="person-top">
+                  <span style={{ position: 'relative', flexShrink: 0 }}>
+                    <span className="avatar avatar-lg filled" style={{ background: e.color }} aria-hidden="true">{e.initials}</span>
+                    <span className="status-dot" style={{ background: STATUS_DOT[e.status] ?? 'var(--ink-4)' }} aria-hidden="true" />
+                  </span>
+                  <div style={{ minWidth: 0, paddingRight: 56 }}>
+                    <h3 className="person-name truncate">{e.name}</h3>
+                    <div className="person-role truncate">{e.role || 'No title yet'}</div>
                   </div>
                 </div>
-              ))}
-            </div>
-            {filtered.length === 0 && (
-              <div style={{ textAlign: 'center', padding: 32 }} className="text-muted">No employees match your filters.</div>
-            )}
+                <div className="badge-row">
+                  <span className="badge no-dot">{e.dept || 'Unassigned'}</span>
+                  <StatusBadge status={e.status} />
+                </div>
+                <div className="person-contact">
+                  <span><Icon name="mail" size={14} />{e.email ? <a className="truncate" href={`mailto:${e.email}`}>{e.email}</a> : <span className="muted">No email</span>}</span>
+                  <span><Icon name="phone" size={14} />{e.phone ? <a href={`tel:${e.phone}`}>{e.phone}</a> : <span className="muted">No phone</span>}</span>
+                  {e.joinDate && <span><Icon name="calendar" size={14} />Joined {shortDate(e.joinDate)}</span>}
+                </div>
+                <RowActions label={e.name} onEdit={() => openEdit(e)} onDelete={() => setDeleting(e)} />
+              </article>
+            ))}
           </div>
         )}
-      </div>
+      </section>
 
       {modalOpen && (
         <RecordModal
@@ -168,7 +160,7 @@ export default function HRPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete employee?"
+          title="Remove this employee?"
           message={`“${deleting.name}” will be removed from your team directory. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

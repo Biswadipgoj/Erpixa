@@ -1,13 +1,15 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { Sidebar, AppSwitcher } from './components/Layout/Sidebar';
 import TopNav from './components/Layout/TopNav';
 import { ToastContainer } from './components/ui/Toast';
 import AIPanel from './components/ui/AIPanel';
-import { useAuthStore, useUIStore } from './store';
+import Logo from './components/ui/Logo';
+import { useAuthStore, useUIStore, applyTheme } from './store';
 import { useDataStore } from './store/dataStore';
 import { isSupabaseConfigured } from './lib/supabase';
 import { MODULES } from './lib/modules';
+import { useInteractionEffects } from './lib/motion';
 import Icon from './components/ui/Icon';
 
 // Shell pages — always in the critical path, loaded eagerly.
@@ -46,10 +48,13 @@ const PAGE_BY_MODULE: Record<string, React.ReactElement> = {
 
 function SplashScreen({ subtitle }: { subtitle: string }) {
   return (
-    <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', color: 'var(--text-primary)', flexDirection: 'column', gap: 16 }}>
-      <div className="spin" style={{ width: 30, height: 30, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--accent)' }} />
-      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.05rem' }}>Loading Erpixa…</div>
-      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{subtitle}</div>
+    <div className="center-screen" role="status" aria-live="polite">
+      <div className="splash">
+        <Logo size={56} loop />
+        <div className="splash-title">Opening the books</div>
+        <div className="splash-sub">{subtitle}</div>
+        <div className="splash-bar" aria-hidden="true" />
+      </div>
     </div>
   );
 }
@@ -57,24 +62,22 @@ function SplashScreen({ subtitle }: { subtitle: string }) {
 /** Rendered when Supabase environment variables are missing — no demo fallback. */
 function SetupRequiredScreen() {
   return (
-    <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', padding: 24 }}>
-      <div className="card" style={{ maxWidth: 560, padding: 32 }}>
-        <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}><Icon name="plug" size={22} /></div>
-        <h1 style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: '1.4rem', color: 'var(--text-primary)', margin: 0 }}>
-          Connect Erpixa to Supabase
-        </h1>
-        <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 12 }}>
-          Erpixa needs a Supabase project to store your business data. Set these
-          environment variables and restart (locally in <code>.env</code>, or in your
-          hosting provider&rsquo;s project settings):
+    <div className="center-screen">
+      <div className="card center-card">
+        <Logo size={44} variant="paper" animate />
+        <h1 style={{ fontSize: 'var(--t-2xl)', marginTop: 18 }}>Connect Erpixa to Supabase</h1>
+        <p style={{ marginTop: 10 }}>
+          Erpixa keeps your business data in a Supabase project. Set these environment
+          variables and restart — locally in <code>.env</code>, or in your hosting
+          provider&rsquo;s project settings:
         </p>
-        <pre style={{ background: 'var(--bg-subtle)', border: '1.5px solid var(--border)', borderRadius: 10, padding: '14px 16px', fontSize: '0.8rem', overflowX: 'auto' }}>
+        <pre style={{ margin: '16px 0', padding: '14px 16px', background: 'var(--cover)', color: 'var(--cover-ink)', borderRadius: 10, fontFamily: 'var(--font-mono)', fontSize: 'var(--t-sm)', overflowX: 'auto', lineHeight: 1.7 }}>
 {`VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_ANON_KEY`}
         </pre>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+        <p style={{ fontSize: 'var(--t-sm)' }}>
           Then run <code>supabase/schema.sql</code> in the Supabase Dashboard → SQL Editor
-          to create the tables. Full instructions are in <code>SETUP_GUIDE.md</code>.
+          to create the tables. Full steps are in <code>SETUP_GUIDE.md</code>.
         </p>
       </div>
     </div>
@@ -85,42 +88,34 @@ VITE_SUPABASE_ANON_KEY=YOUR_ANON_KEY`}
 function DbErrorBanner({ error, onRetry }: { error: string; onRetry: () => void }) {
   const [open, setOpen] = useState(true);
   if (!open) return null;
-  const isSchemaError = error.toLowerCase().includes('does not exist') ||
-    error.toLowerCase().includes('42p01') ||
-    error.toLowerCase().includes('relation');
+  const lower = error.toLowerCase();
+  const isSchemaError = lower.includes('does not exist') || lower.includes('42p01') || lower.includes('relation');
   return (
-    <div style={{
-      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
-      background: 'linear-gradient(135deg, #7C2D12, #991B1B)',
-      borderBottom: '1px solid rgba(239,68,68,0.5)',
-      padding: '10px 20px', display: 'flex', alignItems: 'center',
-      gap: 12, fontFamily: 'Inter, sans-serif', fontSize: '0.8rem', color: '#FEE2E2',
-    }}>
-      <Icon name="alert" size={16} />
-      <span style={{ flex: 1, lineHeight: 1.5 }}>
-        <strong>Database error:</strong> {error}
+    <div className="banner" role="alert">
+      <span className="banner-icon"><Icon name="alert" size={18} /></span>
+      <div className="banner-text">
+        <strong>We couldn’t load your data.</strong> {error}
         {isSchemaError && (
-          <> — The database tables may be out of date. Run <code style={{ background: 'rgba(0,0,0,0.3)', padding: '1px 5px', borderRadius: 4 }}>supabase/schema.sql</code> in your <strong>Supabase Dashboard → SQL Editor</strong>.</>
+          <> The database tables may be out of date — run <code>supabase/schema.sql</code> in your Supabase Dashboard → SQL Editor.</>
         )}
-      </span>
-      <button
-        onClick={onRetry}
-        style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, color: '#fff', padding: '4px 12px', cursor: 'pointer', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
-      >Retry</button>
-      <button
-        onClick={() => setOpen(false)}
-        aria-label="Dismiss"
-        style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', display: 'flex', padding: '0 4px' }}
-      ><Icon name="close" size={16} /></button>
+      </div>
+      <button type="button" className="btn btn-sm btn-secondary" onClick={onRetry}>Retry</button>
+      <button type="button" className="icon-btn sm" onClick={() => setOpen(false)} aria-label="Dismiss"><Icon name="close" size={15} /></button>
     </div>
   );
 }
 
-/** Lightweight fallback while a lazily-loaded module page downloads. */
+/** Skeleton of a module page while its code downloads. */
 function PageLoading() {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-muted)' }}>
-      <div className="spin" style={{ width: 28, height: 28, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--accent)' }} />
+    <div aria-busy="true" aria-label="Loading page">
+      <div className="skeleton" style={{ width: 120, height: 14, marginBottom: 14 }} />
+      <div className="skeleton" style={{ width: 280, height: 34, marginBottom: 10 }} />
+      <div className="skeleton" style={{ width: 360, maxWidth: '80%', height: 16, marginBottom: 32 }} />
+      <div className="stats" style={{ marginBottom: 20 }}>
+        {[0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 118, borderRadius: 12 }} />)}
+      </div>
+      <div className="skeleton" style={{ height: 320, borderRadius: 12 }} />
     </div>
   );
 }
@@ -129,25 +124,30 @@ function PageLoading() {
 function AppLayout() {
   const organization = useAuthStore((s) => s.organization);
   const enabled = new Set(organization?.enabled_modules ?? []);
+  const location = useLocation();
 
   return (
     <div className="app-layout">
+      <a href="#main" className="skip-link">Skip to content</a>
       <Sidebar />
       <AppSwitcher />
       <div className="main-content">
         <TopNav />
-        <main className="page-body">
-          <Suspense fallback={<PageLoading />}>
-            <Routes>
-              <Route path="/" element={<DashboardPage />} />
-              {MODULES.filter((m) => m.id !== 'dashboard' && enabled.has(m.id)).map((m) => (
-                <Route key={m.id} path={m.path} element={PAGE_BY_MODULE[m.id]} />
-              ))}
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/admin" element={<AdminPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </Suspense>
+        <main className="page-body" id="main">
+          {/* Keyed by route so each page plays its entrance on navigation. */}
+          <div className="page-inner" key={location.pathname}>
+            <Suspense fallback={<PageLoading />}>
+              <Routes>
+                <Route path="/" element={<DashboardPage />} />
+                {MODULES.filter((m) => m.id !== 'dashboard' && enabled.has(m.id)).map((m) => (
+                  <Route key={m.id} path={m.path} element={PAGE_BY_MODULE[m.id]} />
+                ))}
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/admin" element={<AdminPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Suspense>
+          </div>
         </main>
       </div>
       <AIPanel />
@@ -178,8 +178,10 @@ function AppShell() {
   const dataError = useDataStore((s) => s.error);
   const theme = useUIStore((s) => s.theme);
 
+  useInteractionEffects();
+
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    applyTheme(theme);
   }, [theme]);
 
   useEffect(() => {
@@ -202,7 +204,7 @@ function AppShell() {
   else if (passwordRecovery) content = <ResetPasswordPage />;
   else if (orgLoading) content = <SplashScreen subtitle="Loading your workspace" />;
   else if (!organization) content = <OnboardingPage />;
-  else if (dataLoading) content = <SplashScreen subtitle="Fetching your live data" />;
+  else if (dataLoading) content = <SplashScreen subtitle="Fetching your live figures" />;
   else {
     content = (
       <>

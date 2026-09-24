@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useAuthStore } from '../store';
 import Icon from '../components/ui/Icon';
+import Logo from '../components/ui/Logo';
 
 /**
  * Handles the redirect from Supabase for OAuth (Google) and password-recovery
@@ -99,54 +100,55 @@ export default function AuthCallbackPage() {
     function redirect(path: string) { setTimeout(() => navigate(path, { replace: true }), REDIRECT_DELAY_MS); }
   }, [navigate]);
 
-  const accent = state.status === 'error' ? 'var(--danger)' : state.status === 'success' ? 'var(--success)' : 'var(--accent)';
+  const tone = state.status === 'error' ? 'danger' : state.status === 'success' ? 'success' : 'accent';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-base)', gap: 18, padding: '0 24px', color: 'var(--text-primary)' }}>
-      <div style={{
-        width: 56, height: 56, borderRadius: 14, background: `color-mix(in srgb, ${accent} 12%, transparent)`, color: accent,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <Icon
-          name={state.status === 'error' ? 'alert' : state.status === 'success' ? 'check' : 'spark'}
-          size={26}
-          className={state.status === 'loading' ? 'spin' : undefined}
-        />
-      </div>
-
-      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '1.2rem', textAlign: 'center' }}>
-        {state.status === 'error' ? 'Authentication failed' : state.message}
-      </div>
-      {state.status === 'error' && (
-        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', textAlign: 'center', maxWidth: 420, lineHeight: 1.6 }}>{state.message}</div>
-      )}
-      {state.status !== 'error' && (
-        <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Just a moment…</div>
-      )}
-
-      {state.hint && (
-        <div className="card" style={{ maxWidth: 460, width: '100%', padding: '14px 18px', background: 'var(--accent-soft)' }}>
-          <div style={{ fontWeight: 700, color: 'var(--accent-text)', marginBottom: 6, fontSize: '0.82rem' }}>How to fix this</div>
-          <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.7, whiteSpace: 'pre-line' }}>{state.hint}</div>
-        </div>
-      )}
-
-      {(state.detail || state.supabaseCode) && (
-        <details style={{ maxWidth: 460, width: '100%' }}>
-          <summary style={{ cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text-disabled)', fontFamily: 'var(--font-mono)', textAlign: 'center', userSelect: 'none' }}>
-            Show technical details
-          </summary>
-          <div style={{ marginTop: 10, padding: '12px 16px', background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)', wordBreak: 'break-all', lineHeight: 1.8 }}>
-            {state.supabaseCode && <div><strong>Code:</strong> {state.supabaseCode}</div>}
-            {state.detail && <div><strong>Detail:</strong> {state.detail}</div>}
-            <div><strong>Origin:</strong> {window.location.origin}</div>
+    <div className="center-screen">
+      <div className="splash" style={{ maxWidth: 480, width: '100%' }} role="status" aria-live="polite">
+        {state.status === 'loading' ? (
+          <Logo size={56} loop />
+        ) : (
+          <div className={`attn-icon ${tone}`} style={{ width: 56, height: 56, borderRadius: 16, animation: 'badgePop 520ms var(--ease-spring) backwards' }}>
+            <Icon name={state.status === 'error' ? 'alert' : 'check'} size={26} strokeWidth={2} />
           </div>
-        </details>
-      )}
+        )}
 
-      {state.status === 'error' && (
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Redirecting back to sign in…</div>
-      )}
+        <div className="splash-title" key={state.status}>
+          {state.status === 'error' ? 'Sign-in didn’t go through' : state.message}
+        </div>
+        {state.status === 'error'
+          ? <p style={{ fontSize: 'var(--t-md)', color: 'var(--ink-3)', maxWidth: '44ch' }}>{state.message}</p>
+          : <div className="splash-sub">Just a moment…</div>}
+        {state.status === 'loading' && <div className="splash-bar" aria-hidden="true" />}
+
+        {state.hint && (
+          <div className="card" style={{ width: '100%', padding: '16px 18px', textAlign: 'left', animation: 'rise 480ms var(--ease-out) 200ms backwards' }}>
+            <div style={{ fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Icon name="wrench" size={15} /> How to fix this
+            </div>
+            <div style={{ fontSize: 'var(--t-sm)', color: 'var(--ink-2)', lineHeight: 1.7, whiteSpace: 'pre-line' }}>{state.hint}</div>
+          </div>
+        )}
+
+        {(state.detail || state.supabaseCode) && (
+          <details style={{ width: '100%', textAlign: 'left' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 'var(--t-xs)', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', textAlign: 'center', userSelect: 'none' }}>
+              Show technical details
+            </summary>
+            <div style={{ marginTop: 10, padding: '12px 16px', background: 'var(--sunk)', border: '1px solid var(--rule)', borderRadius: 10, fontFamily: 'var(--font-mono)', fontSize: 'var(--t-xs)', color: 'var(--ink-2)', wordBreak: 'break-all', lineHeight: 1.8 }}>
+              {state.supabaseCode && <div><strong>Code:</strong> {state.supabaseCode}</div>}
+              {state.detail && <div><strong>Detail:</strong> {state.detail}</div>}
+              <div><strong>Origin:</strong> {window.location.origin}</div>
+            </div>
+          </details>
+        )}
+
+        {state.status === 'error' && (
+          <div style={{ fontSize: 'var(--t-sm)', color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="spark" size={13} className="spin" /> Taking you back to sign in…
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,9 +1,12 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useUIStore, useAuthStore } from '../../store';
 import { useDataStore } from '../../store/dataStore';
-import { MODULES, type ModuleDef } from '../../lib/modules';
+import { MODULES, MODULE_GROUPS, type ModuleDef } from '../../lib/modules';
+import { stagger, useDismiss, usePresence } from '../../lib/motion';
 import Icon from '../ui/Icon';
+import Logo from '../ui/Logo';
+import { initialsOf } from '../../lib/format';
 
 /** Modules visible for the current organization (dashboard is always first). */
 function useEnabledModules(): ModuleDef[] {
@@ -14,42 +17,72 @@ function useEnabledModules(): ModuleDef[] {
   }, [organization?.enabled_modules]);
 }
 
+interface NavEntry { key: string; path: string; label: string; icon: string; badge?: string }
+
 export function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar, setCurrentModule, mobileNavOpen, setMobileNavOpen } = useUIStore();
+  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const setCurrentModule = useUIStore((s) => s.setCurrentModule);
+  const mobileNavOpen = useUIStore((s) => s.mobileNavOpen);
+  const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
   const { user, organization, orgRole, signOut } = useAuthStore();
   const openTickets = useDataStore((s) => s.tickets.filter((t) => t.status !== 'Resolved').length);
   const navigate = useNavigate();
   const location = useLocation();
   const modules = useEnabledModules();
+  const isAdmin = orgRole === 'owner' || orgRole === 'admin';
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => { setMobileNavOpen(false); }, [location.pathname, setMobileNavOpen]);
 
-  const handleNav = (path: string, label: string) => {
-    navigate(path);
-    setCurrentModule(label);
+  // "[" toggles the sidebar, like most pro tools — ignored while typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.key !== '[' || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
+      toggleSidebar();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [toggleSidebar]);
+
+  const sections: { title: string; items: NavEntry[] }[] = MODULE_GROUPS.map((g) => ({
+    title: g,
+    items: modules.filter((m) => m.group === g).map((m) => ({
+      key: m.id, path: m.path, label: m.label, icon: m.icon,
+      badge: m.id === 'helpdesk' && openTickets > 0 ? String(openTickets) : undefined,
+    })),
+  })).filter((s) => s.items.length > 0);
+  sections.push({
+    title: 'Workspace',
+    items: [
+      { key: 'settings', path: '/settings', label: 'Settings', icon: 'settings' },
+      ...(isAdmin ? [{ key: 'admin', path: '/admin', label: 'Team & access', icon: 'admin' }] : []),
+    ],
+  });
+
+  // The ribbon indicator glides to whichever item matches the route.
+  const listRef = useRef<HTMLDivElement>(null);
+  const [indicator, setIndicator] = useState<{ y: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = listRef.current?.querySelector<HTMLElement>('.nav-item.active');
+      setIndicator(el ? { y: el.offsetTop, h: el.offsetHeight } : null);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (listRef.current) ro.observe(listRef.current);
+    return () => ro.disconnect();
+  }, [location.pathname, sidebarCollapsed, modules.length, isAdmin]);
+
+  const go = (entry: NavEntry) => {
+    navigate(entry.path);
+    setCurrentModule(entry.label);
   };
 
-  const renderItem = (m: ModuleDef) => {
-    const isActive = location.pathname === m.path;
-    const badge = m.id === 'helpdesk' && openTickets > 0 ? String(openTickets) : undefined;
-    return (
-      <button
-        key={m.id}
-        type="button"
-        className={`nav-item${isActive ? ' active' : ''}`}
-        onClick={() => handleNav(m.path, m.label)}
-        title={sidebarCollapsed ? m.label : undefined}
-        aria-current={isActive ? 'page' : undefined}
-      >
-        <span className="nav-icon"><Icon name={m.icon} size={18} /></span>
-        {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left' }}>{m.label}</span>}
-        {!sidebarCollapsed && badge && <span className="nav-badge">{badge}</span>}
-      </button>
-    );
-  };
-
-  const isAdmin = orgRole === 'owner' || orgRole === 'admin';
+  const initials = user ? initialsOf(user.full_name, user.email) : '?';
+  let navIndex = 0;
 
   return (
     <>
@@ -58,102 +91,85 @@ export function Sidebar() {
         className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileNavOpen ? ' open' : ''}`}
         aria-label="Main navigation"
       >
-        {/* Logo / organization identity */}
-        <div className="sidebar-logo">
-          <div className="sidebar-logo-mark" aria-hidden="true">
-            {organization?.logo_url ? (
-              <img
-                src={organization.logo_url}
-                alt=""
-                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
-              />
-            ) : (
-              <span>E</span>
-            )}
-          </div>
-          {!sidebarCollapsed && (
-            <div style={{ overflow: 'hidden' }}>
-              <div className="sidebar-wordmark">
-                Erp<span>ixa</span>
-              </div>
-              {organization && (
-                <div className="truncate" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                  {organization.name}
-                </div>
-              )}
-            </div>
+        <div className="sidebar-brand">
+          {organization?.logo_url ? (
+            <img src={organization.logo_url} alt="" width={32} height={32} style={{ borderRadius: 9, objectFit: 'cover', flexShrink: 0 }} />
+          ) : (
+            <Logo size={32} animate />
           )}
+          <div className="sidebar-brand-text">
+            <div className="sidebar-wordmark">Erpixa</div>
+            {organization && <div className="sidebar-org truncate">{organization.name}</div>}
+          </div>
         </div>
 
-        {/* Nav — only the modules enabled for this organization */}
         <div className="sidebar-nav">
-          <div className="sidebar-section-label">Modules</div>
-          {modules.map(renderItem)}
+          <div className="nav-list" ref={listRef}>
+            <span
+              className="nav-indicator"
+              aria-hidden="true"
+              style={{
+                transform: `translateY(${indicator?.y ?? 0}px)`,
+                height: indicator?.h ?? 38,
+                opacity: indicator ? 1 : 0,
+              }}
+            />
+            {sections.map((section) => (
+              <div key={section.title} role="group" aria-label={section.title} style={{ display: 'contents' }}>
+                <div className="nav-group-label" aria-hidden="true">{section.title}</div>
+                {section.items.map((entry) => {
+                  const isActive = location.pathname === entry.path;
+                  const order = navIndex++;
+                  return (
+                    <button
+                      key={entry.key}
+                      type="button"
+                      className={`nav-item${isActive ? ' active' : ''}`}
+                      onClick={() => go(entry)}
+                      title={sidebarCollapsed ? entry.label : undefined}
+                      aria-current={isActive ? 'page' : undefined}
+                      style={stagger(order)}
+                    >
+                      <span className="nav-icon"><Icon name={entry.icon} size={18} /></span>
+                      <span className="nav-label">{entry.label}</span>
+                      {entry.badge && <span className="nav-badge" aria-label={`${entry.badge} open`}>{entry.badge}</span>}
+                      {entry.badge && <span className="nav-dot" aria-hidden="true" />}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* Bottom: Settings + Admin + User */}
-        <div className="sidebar-bottom">
+        <div className="sidebar-foot">
           <button
             type="button"
-            className={`nav-item${location.pathname === '/settings' ? ' active' : ''}`}
-            onClick={() => handleNav('/settings', 'Settings')}
-            title={sidebarCollapsed ? 'Settings' : undefined}
-            aria-current={location.pathname === '/settings' ? 'page' : undefined}
+            className="nav-item sidebar-collapse"
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={`${sidebarCollapsed ? 'Expand' : 'Collapse'} sidebar  [`}
           >
-            <span className="nav-icon"><Icon name="settings" size={18} /></span>
-            {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left' }}>Settings</span>}
+            <span className="nav-icon"><Icon name="chevrons-left" size={18} /></span>
+            <span className="nav-label">Collapse</span>
+            <kbd className="nav-label" style={{ flex: 'none', background: 'transparent', color: 'var(--cover-ink-2)', borderColor: 'var(--cover-rule)' }}>[</kbd>
           </button>
 
-          {isAdmin && (
-            <button
-              type="button"
-              className={`nav-item${location.pathname === '/admin' ? ' active' : ''}`}
-              onClick={() => handleNav('/admin', 'Admin')}
-              title={sidebarCollapsed ? 'Admin Panel' : undefined}
-              aria-current={location.pathname === '/admin' ? 'page' : undefined}
-            >
-              <span className="nav-icon"><Icon name="admin" size={18} /></span>
-              {!sidebarCollapsed && <span style={{ flex: 1, textAlign: 'left' }}>Admin Panel</span>}
-            </button>
-          )}
-
-          {!sidebarCollapsed && user && (
-            <div className="sidebar-user-card">
-              <div className="sidebar-user-avatar" aria-hidden="true">
-                {user.full_name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || user.email.substring(0, 2).toUpperCase()}
+          {user && (
+            <div className="sidebar-user" title={sidebarCollapsed ? `${user.full_name} · ${orgRole ?? ''}` : undefined}>
+              <span className="avatar avatar-md filled avatar-ring" style={{ background: 'var(--cover-3)', color: 'var(--cover-ink)' }} aria-hidden="true">
+                {user.avatar_url ? <img src={user.avatar_url} alt="" /> : initials}
+              </span>
+              <div className="sidebar-user-meta">
+                <div className="sidebar-user-name truncate">{user.full_name}</div>
+                <div className="sidebar-user-role truncate">{orgRole ?? user.email}</div>
               </div>
-              <div style={{ flex: 1, overflow: 'hidden' }}>
-                <div className="sidebar-user-name">{user.full_name}</div>
-                <div className="sidebar-user-email">{user.email}</div>
-                {orgRole && <div className="sidebar-user-role">{orgRole}</div>}
-              </div>
-              <button
-                type="button"
-                onClick={signOut}
-                title="Sign out"
-                aria-label="Sign out"
-                className="sidebar-signout-btn"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-                </svg>
+              <button type="button" onClick={signOut} title="Sign out" aria-label="Sign out" className="sidebar-signout">
+                <Icon name="logout" size={16} />
               </button>
             </div>
           )}
         </div>
-
-        {/* Collapse toggle (desktop) */}
-        <button
-          type="button"
-          className="sidebar-toggle"
-          onClick={toggleSidebar}
-          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
-            {sidebarCollapsed ? <path d="m9 18 6-6-6-6" /> : <path d="m15 18-6-6 6-6" />}
-          </svg>
-        </button>
       </nav>
     </>
   );
@@ -161,20 +177,17 @@ export function Sidebar() {
 
 /* ─── App Switcher ─────────────────────────────────────────────── */
 export function AppSwitcher() {
-  const { appSwitcherOpen, setAppSwitcherOpen } = useUIStore();
+  const appSwitcherOpen = useUIStore((s) => s.appSwitcherOpen);
+  const setAppSwitcherOpen = useUIStore((s) => s.setAppSwitcherOpen);
   const setCurrentModule = useUIStore((s) => s.setCurrentModule);
   const navigate = useNavigate();
   const location = useLocation();
   const modules = useEnabledModules();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const { mounted, closing } = usePresence(appSwitcherOpen, 180);
+  useDismiss(panelRef, appSwitcherOpen, () => setAppSwitcherOpen(false));
 
-  useEffect(() => {
-    if (!appSwitcherOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAppSwitcherOpen(false); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [appSwitcherOpen, setAppSwitcherOpen]);
-
-  if (!appSwitcherOpen) return null;
+  if (!mounted) return null;
 
   const go = (path: string, label: string) => {
     navigate(path);
@@ -182,40 +195,33 @@ export function AppSwitcher() {
     setAppSwitcherOpen(false);
   };
 
+  const items = [...modules.map((m) => ({ path: m.path, label: m.label, icon: m.icon })), { path: '/settings', label: 'Settings', icon: 'settings' }];
+
   return (
-    <div className="app-switcher-overlay" onClick={() => setAppSwitcherOpen(false)} role="presentation">
-      <div className="app-switcher" role="dialog" aria-modal="true" aria-label="Module switcher" onClick={(e) => e.stopPropagation()}>
-        <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div className={`switcher-backdrop${closing ? ' is-closing' : ''}`} role="presentation">
+      <div ref={panelRef} className="switcher" role="dialog" aria-modal="true" aria-labelledby="switcher-title">
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div>
-            <div style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 800, fontSize: '1.25rem', color: 'var(--text-primary)' }}>
-              Erpixa Modules
-            </div>
-            <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Navigate to any module</div>
+            <h2 id="switcher-title" style={{ fontSize: 'var(--t-xl)' }}>Jump to a module</h2>
+            <p style={{ fontSize: 'var(--t-sm)', color: 'var(--ink-3)', marginTop: 2 }}>Everything enabled for this workspace.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => setAppSwitcherOpen(false)}
-            className="btn btn-sm btn-secondary"
-          >
-            <Icon name="close" size={15} /> Close
+          <button type="button" onClick={() => setAppSwitcherOpen(false)} className="icon-btn" aria-label="Close module switcher">
+            <Icon name="close" size={18} />
           </button>
         </div>
-        <div className="app-grid">
-          {modules.map((m) => (
+        <div className="switcher-grid">
+          {items.map((m, i) => (
             <button
-              key={m.id}
+              key={m.path}
               type="button"
-              className={`app-item${location.pathname === m.path ? ' active-app' : ''}`}
+              className={`switcher-item${location.pathname === m.path ? ' current' : ''}`}
               onClick={() => go(m.path, m.label)}
+              style={stagger(i)}
             >
-              <div className="app-item-icon"><Icon name={m.icon} size={22} /></div>
-              <div className="app-item-name">{m.label}</div>
+              <span className="switcher-icon"><Icon name={m.icon} size={22} /></span>
+              <span className="switcher-name">{m.label}</span>
             </button>
           ))}
-          <button type="button" className={`app-item${location.pathname === '/settings' ? ' active-app' : ''}`} onClick={() => go('/settings', 'Settings')}>
-            <div className="app-item-icon"><Icon name="settings" size={22} /></div>
-            <div className="app-item-name">Settings</div>
-          </button>
         </div>
       </div>
     </div>

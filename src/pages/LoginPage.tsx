@@ -1,23 +1,53 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore, useUIStore } from '../store';
 import Icon from '../components/ui/Icon';
+import AuthCover from '../components/ui/AuthCover';
 
 type Tab = 'signin' | 'signup';
 
 const PW_LABELS = ['', 'Weak', 'Fair', 'Good', 'Strong'];
-const PW_COLORS = ['#DC2626', '#EA580C', '#D97706', '#16A34A'];
+const PW_TONES = ['var(--danger)', 'var(--warning)', 'var(--info)', 'var(--success)'];
 
 function Spinner() {
   return <Icon name="spark" size={16} className="spin" />;
 }
 
 function Notice({ tone, children }: { tone: 'danger' | 'success' | 'info'; children: React.ReactNode }) {
-  const bg = `var(--${tone}-bg)`;
-  const border = `var(--${tone}-border)`;
-  const color = `var(--${tone})`;
+  const icon = tone === 'danger' ? 'alert' : tone === 'success' ? 'check' : 'info';
   return (
-    <div role="alert" style={{ padding: '10px 14px', background: bg, border: `1px solid ${border}`, borderRadius: 8, color, fontSize: '0.85rem', lineHeight: 1.5 }}>
-      {children}
+    <div role={tone === 'danger' ? 'alert' : 'status'} className={`notice notice-${tone}`}>
+      <Icon name={icon} size={16} />
+      <span className="notice-text">{children}</span>
+    </div>
+  );
+}
+
+function PasswordInput({ id, value, onChange, show, onToggle, placeholder, autoComplete, invalid }: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  show: boolean;
+  onToggle: () => void;
+  placeholder: string;
+  autoComplete: string;
+  invalid?: boolean;
+}) {
+  return (
+    <div className="input-affix has-btn">
+      <span className="affix-icon"><Icon name="lock" size={16} /></span>
+      <input
+        id={id}
+        type={show ? 'text' : 'password'}
+        className="tinput tinput-lg"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete={autoComplete}
+        aria-invalid={invalid || undefined}
+      />
+      <button type="button" className="icon-btn sm affix-btn" onClick={onToggle} aria-label={show ? 'Hide password' : 'Show password'} aria-pressed={show}>
+        <Icon name={show ? 'eye-off' : 'eye'} size={16} />
+      </button>
     </div>
   );
 }
@@ -99,142 +129,130 @@ export default function LoginPage() {
 
   const pwStrength = Math.min(4, Math.floor(password.length / 3));
   const busy = loading || googleLoading;
+  const mismatch = confirmPw.length > 0 && confirmPw !== password;
+
+  const title = forgotMode ? 'Reset your password' : tab === 'signin' ? 'Welcome back' : 'Open your books';
+  const sub = forgotMode
+    ? 'We’ll email you a secure link to choose a new one.'
+    : tab === 'signin' ? 'Sign in to pick up where your team left off.' : 'Create an account — setup takes about two minutes.';
+
+  const emailField = (autoFocus: boolean) => (
+    <div className="field">
+      <label className="field-label" htmlFor="auth-email">Work email</label>
+      <div className="input-affix">
+        <span className="affix-icon"><Icon name="mail" size={16} /></span>
+        <input id="auth-email" type="email" className="tinput tinput-lg" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoFocus={autoFocus} />
+      </div>
+    </div>
+  );
 
   return (
-    <div className="login-page">
-      <div className="login-card">
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{ width: 44, height: 44, background: 'var(--accent)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', color: '#fff', fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.25rem' }}>E</div>
-          <h1 style={{ fontSize: '1.4rem', marginBottom: 4 }}>Erpixa</h1>
-          <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            {forgotMode ? 'Reset your password' : tab === 'signin' ? 'Sign in to your workspace' : 'Create your account'}
-          </p>
-        </div>
+    <div className="auth">
+      <AuthCover />
 
-        {!forgotMode && (
-          <div style={{ display: 'flex', background: 'var(--bg-subtle)', borderRadius: 'var(--r-md)', padding: 3, marginBottom: 20, gap: 3 }}>
-            {(['signin', 'signup'] as Tab[]).map((t) => (
-              <button key={t} type="button" onClick={() => switchTab(t)}
-                style={{ flex: 1, height: 34, borderRadius: 'var(--r-sm)', fontWeight: 600, fontSize: '0.875rem',
-                  background: tab === t ? 'var(--bg-surface)' : 'transparent',
-                  color: tab === t ? 'var(--text-primary)' : 'var(--text-muted)',
-                  boxShadow: tab === t ? 'var(--shadow-xs)' : 'none' }}>
-                {t === 'signin' ? 'Sign in' : 'Sign up'}
-              </button>
-            ))}
+      <main className="auth-main">
+        <div className="auth-form-wrap">
+          <div key={`${tab}-${forgotMode}`} className="auth-panel">
+            <h1 className="auth-title">{title}</h1>
+            <p className="auth-sub">{sub}</p>
           </div>
-        )}
 
-        {!forgotMode && (
-          <>
-            <button type="button" onClick={handleGoogle} disabled={busy} className="btn btn-secondary w-full" style={{ height: 44, marginBottom: 16 }}>
-              {googleLoading ? <Spinner /> : <Icon name="google" size={18} />}
-              {googleLoading ? 'Redirecting…' : 'Continue with Google'}
-            </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-              <span style={{ color: 'var(--text-disabled)', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>or email</span>
-              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-            </div>
-          </>
-        )}
-
-        {tab === 'signin' && !forgotMode && (
-          <form onSubmit={handleSignIn} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="input-wrap">
-              <label className="login-field-label">Email</label>
-              <input type="email" className="login-input" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoFocus />
-            </div>
-            <div className="input-wrap">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <label className="login-field-label" style={{ margin: 0 }}>Password</label>
-                <button type="button" onClick={() => { setForgotMode(true); setError(''); setSuccess(''); }} style={{ color: 'var(--accent)', fontSize: '0.78rem', fontWeight: 600 }}>Forgot?</button>
+          <div className="auth-stack" style={{ marginTop: 28 }}>
+            {!forgotMode && (
+              <div className="segmented" role="tablist" aria-label="Sign in or create an account">
+                <span className="segmented-thumb" aria-hidden="true" style={{ width: 'calc(50% - 3px)', transform: `translateX(${tab === 'signin' ? 0 : 100}%)` }} />
+                {(['signin', 'signup'] as Tab[]).map((t) => (
+                  <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => switchTab(t)}>
+                    {t === 'signin' ? 'Sign in' : 'Create account'}
+                  </button>
+                ))}
               </div>
-              <div style={{ position: 'relative' }}>
-                <input type={showPassword ? 'text' : 'password'} className="login-input" placeholder="Your password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" style={{ paddingRight: 42 }} />
-                <button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', display: 'flex' }}>
-                  <Icon name={showPassword ? 'eye-off' : 'eye'} size={17} />
+            )}
+
+            {!forgotMode && (
+              <>
+                <button type="button" onClick={handleGoogle} disabled={busy} className="btn btn-secondary btn-lg btn-block">
+                  {googleLoading ? <Spinner /> : <Icon name="google" size={18} />}
+                  {googleLoading ? 'Redirecting to Google…' : 'Continue with Google'}
                 </button>
-              </div>
-            </div>
-            {error && <Notice tone="danger">{error}</Notice>}
-            {success && <Notice tone="success">{success}</Notice>}
-            <button type="submit" className="btn btn-primary w-full" disabled={busy} style={{ height: 44 }}>
-              {loading ? <><Spinner /> Signing in…</> : 'Sign in'}
-            </button>
-          </form>
-        )}
+                <div className="or-rule">or with email</div>
+              </>
+            )}
 
-        {tab === 'signup' && !forgotMode && (
-          <form onSubmit={handleSignUp} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="input-wrap">
-              <label className="login-field-label">Full name</label>
-              <input className="login-input" placeholder="Jane Smith" value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="name" autoFocus />
-            </div>
-            <div className="input-wrap">
-              <label className="login-field-label">Email</label>
-              <input type="email" className="login-input" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
-            </div>
-            <div className="input-wrap">
-              <label className="login-field-label">Password <span style={{ color: 'var(--text-disabled)', fontWeight: 400 }}>(min. 8)</span></label>
-              <div style={{ position: 'relative' }}>
-                <input type={showPassword ? 'text' : 'password'} className="login-input" placeholder="Create a password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" style={{ paddingRight: 42 }} />
-                <button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', display: 'flex' }}>
-                  <Icon name={showPassword ? 'eye-off' : 'eye'} size={17} />
-                </button>
-              </div>
-              {password.length > 0 && (
-                <div style={{ marginTop: 6, display: 'flex', gap: 4, alignItems: 'center' }}>
-                  {[1, 2, 3, 4].map((lvl) => (
-                    <div key={lvl} style={{ flex: 1, height: 3, borderRadius: 99, background: lvl <= pwStrength ? PW_COLORS[pwStrength - 1] : 'var(--border)' }} />
-                  ))}
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 4, whiteSpace: 'nowrap' }}>{PW_LABELS[pwStrength]}</span>
+            {tab === 'signin' && !forgotMode && (
+              <form onSubmit={handleSignIn} noValidate className="auth-stack auth-panel" key="signin">
+                {emailField(true)}
+                <div className="field">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="field-label" htmlFor="auth-password">Password</label>
+                    <button type="button" className="link-btn" onClick={() => { setForgotMode(true); setError(''); setSuccess(''); }}>Forgot password?</button>
+                  </div>
+                  <PasswordInput id="auth-password" value={password} onChange={setPassword} show={showPassword} onToggle={() => setShowPassword((v) => !v)} placeholder="Your password" autoComplete="current-password" />
                 </div>
-              )}
-            </div>
-            <div className="input-wrap">
-              <label className="login-field-label">Confirm password</label>
-              <div style={{ position: 'relative' }}>
-                <input type={showConfirm ? 'text' : 'password'} className="login-input" placeholder="Re-enter password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} autoComplete="new-password" style={{ paddingRight: 42, borderColor: confirmPw && confirmPw !== password ? 'var(--danger)' : undefined }} />
-                <button type="button" onClick={() => setShowConfirm((v) => !v)} aria-label={showConfirm ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', display: 'flex' }}>
-                  <Icon name={showConfirm ? 'eye-off' : 'eye'} size={17} />
+                {error && <Notice tone="danger">{error}</Notice>}
+                {success && <Notice tone="success">{success}</Notice>}
+                <button type="submit" className="btn btn-primary btn-lg btn-block btn-arrow" disabled={busy}>
+                  {loading ? <><Spinner /> Signing in…</> : <>Sign in <Icon name="arrow-right" size={16} /></>}
                 </button>
-              </div>
-              {confirmPw && confirmPw !== password && <div style={{ marginTop: 4, fontSize: '0.78rem', color: 'var(--danger)' }}>Passwords don’t match</div>}
-            </div>
-            {error && <Notice tone="danger">{error}</Notice>}
-            {success && <Notice tone="success">{success}</Notice>}
-            <button type="submit" className="btn btn-primary w-full" disabled={busy} style={{ height: 44 }}>
-              {loading ? <><Spinner /> Creating account…</> : 'Create account'}
-            </button>
-            <p style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>
-              By signing up you agree to our Terms &amp; Privacy Policy.
-            </p>
-          </form>
-        )}
+              </form>
+            )}
 
-        {forgotMode && (
-          <form onSubmit={handleForgot} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <Notice tone="info">Enter your registered email and we’ll send you a secure reset link.</Notice>
-            <div className="input-wrap">
-              <label className="login-field-label">Email</label>
-              <input type="email" className="login-input" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoFocus />
-            </div>
-            {error && <Notice tone="danger">{error}</Notice>}
-            {success && <Notice tone="success">{success}</Notice>}
-            <button type="submit" className="btn btn-primary w-full" disabled={busy} style={{ height: 44 }}>
-              {loading ? <><Spinner /> Sending…</> : 'Send reset link'}
-            </button>
-            <button type="button" onClick={() => { setForgotMode(false); setError(''); setSuccess(''); }} className="btn btn-ghost w-full">
-              Back to sign in
-            </button>
-          </form>
-        )}
+            {tab === 'signup' && !forgotMode && (
+              <form onSubmit={handleSignUp} noValidate className="auth-stack auth-panel" key="signup">
+                <div className="field">
+                  <label className="field-label" htmlFor="auth-name">Full name</label>
+                  <div className="input-affix">
+                    <span className="affix-icon"><Icon name="user" size={16} /></span>
+                    <input id="auth-name" className="tinput tinput-lg" placeholder="Priya Sharma" value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="name" autoFocus />
+                  </div>
+                </div>
+                {emailField(false)}
+                <div className="field">
+                  <label className="field-label" htmlFor="auth-new-password">Password <span className="muted" style={{ fontWeight: 400 }}>· at least 8 characters</span></label>
+                  <PasswordInput id="auth-new-password" value={password} onChange={setPassword} show={showPassword} onToggle={() => setShowPassword((v) => !v)} placeholder="Create a password" autoComplete="new-password" />
+                  {password.length > 0 && (
+                    <div className="pw-meter" aria-live="polite">
+                      {[1, 2, 3, 4].map((lvl) => (
+                        <i key={lvl} className={lvl <= pwStrength ? 'on' : ''} style={{ background: lvl <= pwStrength ? PW_TONES[pwStrength - 1] : undefined }} />
+                      ))}
+                      <span>{PW_LABELS[pwStrength]}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="auth-confirm">Confirm password</label>
+                  <PasswordInput id="auth-confirm" value={confirmPw} onChange={setConfirmPw} show={showConfirm} onToggle={() => setShowConfirm((v) => !v)} placeholder="Re-enter password" autoComplete="new-password" invalid={mismatch} />
+                  {mismatch && <span className="field-error" role="alert"><Icon name="alert" size={12} strokeWidth={2} /> Passwords don’t match</span>}
+                </div>
+                {error && <Notice tone="danger">{error}</Notice>}
+                {success && <Notice tone="success">{success}</Notice>}
+                <button type="submit" className="btn btn-primary btn-lg btn-block btn-arrow" disabled={busy}>
+                  {loading ? <><Spinner /> Creating account…</> : <>Create account <Icon name="arrow-right" size={16} /></>}
+                </button>
+                <p className="auth-legal">By creating an account you agree to our Terms &amp; Privacy Policy.</p>
+              </form>
+            )}
 
-        <div style={{ textAlign: 'center', marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-          <p style={{ color: 'var(--text-disabled)', fontSize: '0.72rem', margin: 0 }}>Secured with Supabase authentication</p>
+            {forgotMode && (
+              <form onSubmit={handleForgot} noValidate className="auth-stack auth-panel" key="forgot">
+                {emailField(true)}
+                {error && <Notice tone="danger">{error}</Notice>}
+                {success && <Notice tone="success">{success}</Notice>}
+                <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={busy}>
+                  {loading ? <><Spinner /> Sending…</> : <><Icon name="mail" size={16} /> Send reset link</>}
+                </button>
+                <button type="button" onClick={() => { setForgotMode(false); setError(''); setSuccess(''); }} className="btn btn-ghost btn-block btn-arrow btn-back">
+                  <Icon name="arrow-left" size={16} /> Back to sign in
+                </button>
+              </form>
+            )}
+          </div>
+
+          <div className="auth-secure">
+            <Icon name="lock" size={13} /> Sessions secured by Supabase Auth · data isolated per workspace
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

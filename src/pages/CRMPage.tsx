@@ -1,19 +1,21 @@
 import { useState } from 'react';
-import { useCurrencyStore, useUIStore } from '../store';
+import { useUIStore } from '../store';
 import { useDataStore } from '../store/dataStore';
 import type { Lead } from '../types';
 import RecordModal from '../components/ui/RecordModal';
-import { PageHeader, RowActions, EmptyState, ConfirmDialog } from '../components/ui/crud';
+import { PageHeader, RowActions, EmptyState, ConfirmDialog, SearchInput } from '../components/ui/crud';
+import { Stat, Stats } from '../components/ui/Stat';
 import { LEAD_FIELDS } from '../lib/recordFields';
 import { CRM_STAGES } from '../lib/crmStages';
+import { moduleById } from '../lib/modules';
+import { initialsOf } from '../lib/format';
+import { stagger } from '../lib/motion';
+import { useMoney } from '../lib/useMoney';
 
-/** Initials for a person's name, e.g. "Priya Sharma" -> "PS". */
-function initialsOf(name: string): string {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || '?';
-}
+const TAG_TONE: Record<string, string> = { Hot: 'badge-danger', Warm: 'badge-warning', Cold: 'badge-info' };
 
 export default function CRMPage() {
-  const formatMoney = useCurrencyStore((s) => s.formatMoney);
+  const formatMoney = useMoney();
   const leads = useDataStore((s) => s.leads);
   const addRecord = useDataStore((s) => s.addRecord);
   const updateRecord = useDataStore((s) => s.updateRecord);
@@ -67,119 +69,96 @@ export default function CRMPage() {
   const matchesSearch = (l: Lead) =>
     l.name.toLowerCase().includes(q) || l.partner.toLowerCase().includes(q) || l.user.toLowerCase().includes(q);
 
-  const openLeads = leads.filter((l) => l.stage !== 'won' && l.stage !== 'lost').length;
+  const open = leads.filter((l) => l.stage !== 'won' && l.stage !== 'lost');
   const wonLeads = leads.filter((l) => l.stage === 'won');
-  const pipelineValue = leads
-    .filter((l) => l.stage !== 'won' && l.stage !== 'lost')
-    .reduce((sum, l) => sum + l.revenue, 0);
+  const lostLeads = leads.filter((l) => l.stage === 'lost');
+  const pipelineValue = open.reduce((sum, l) => sum + l.revenue, 0);
+  const weighted = open.reduce((sum, l) => sum + l.revenue * (l.probability / 100), 0);
   const wonValue = wonLeads.reduce((sum, l) => sum + l.revenue, 0);
+  const closed = wonLeads.length + lostLeads.length;
+  const winRate = closed > 0 ? Math.round((wonLeads.length / closed) * 100) : null;
 
   return (
-    <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="page">
       <PageHeader
-        title="CRM"
-        subtitle="Manage your leads and opportunities."
+        eyebrow={moduleById('crm').group}
+        icon="crm"
+        title="CRM pipeline"
+        subtitle={moduleById('crm').blurb}
         actionLabel="New lead"
         onAction={openCreate}
-      />
+      >
+        {leads.length > 0 && <SearchInput value={search} onChange={setSearch} placeholder="Filter the board…" />}
+      </PageHeader>
 
-      <div className="grid-3 mb-6">
-        <div className="card kpi-card kpi-indigo stagger-1">
-          <div className="kpi-label">Open Leads</div>
-          <div className="kpi-value">{openLeads}</div>
-          <div className="kpi-change">{leads.length} total in pipeline</div>
-        </div>
-        <div className="card kpi-card kpi-amber stagger-2">
-          <div className="kpi-label">Pipeline Value</div>
-          <div className="kpi-value">{formatMoney(pipelineValue)}</div>
-          <div className="kpi-change">Open opportunities</div>
-        </div>
-        <div className="card kpi-card kpi-emerald stagger-3">
-          <div className="kpi-label">Won Value</div>
-          <div className="kpi-value">{formatMoney(wonValue)}</div>
-          <div className="kpi-change">{wonLeads.length} deal{wonLeads.length === 1 ? '' : 's'} closed</div>
-        </div>
-      </div>
+      <Stats cols={3}>
+        <Stat index={0} label="Open pipeline" value={pipelineValue} format={(v) => formatMoney(v)} caption={<><strong>{open.length}</strong> open deal{open.length === 1 ? '' : 's'}</>} tone="accent" icon="crm" />
+        <Stat index={1} label="Weighted forecast" value={weighted} format={(v) => formatMoney(v)} caption="Each deal × its probability" tone="info" icon="target" />
+        <Stat index={2} label="Won" value={wonValue} format={(v) => formatMoney(v)} caption={winRate === null ? 'No deals closed yet' : <><strong>{winRate}%</strong> win rate on {closed} closed</>} tone="success" icon="trend-up" />
+      </Stats>
 
       {leads.length === 0 ? (
-        <div className="card">
+        <div className="card section">
           <EmptyState
             icon="crm"
             title="No leads yet"
-            message="Add your first lead to start building your sales pipeline."
+            message="Add your first lead to start building your sales pipeline, stage by stage."
             actionLabel="New lead"
             onAction={openCreate}
           />
         </div>
       ) : (
-        <>
-          <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-            <input
-              className="tinput"
-              placeholder="Search leads…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ maxWidth: 300 }}
-            />
-          </div>
-
-          <div className="kanban-board" style={{ flex: 1 }}>
-            {CRM_STAGES.map((stage) => {
-              const stageLeads = leads.filter((l) => l.stage === stage.id && matchesSearch(l));
-              const stageTotal = stageLeads.reduce((acc, l) => acc + l.revenue, 0);
-
-              return (
-                <div key={stage.id} className="kanban-column stagger-1">
-                  <div className="kanban-col-header">
-                    <div>
-                      <div className="kanban-col-title" style={{ color: stage.color }}>{stage.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        {formatMoney(stageTotal)} · {stage.probability}% prob
-                      </div>
+        <div className="kanban section" role="list" aria-label="Pipeline stages">
+          {CRM_STAGES.map((stage, col) => {
+            const stageLeads = leads.filter((l) => l.stage === stage.id && matchesSearch(l));
+            const stageTotal = stageLeads.reduce((acc, l) => acc + l.revenue, 0);
+            return (
+              <section key={stage.id} className="kanban-col" style={stagger(col)} role="listitem" aria-label={`${stage.name}, ${stageLeads.length} deals`}>
+                <div className="kanban-head">
+                  <div>
+                    <div className="kanban-name">
+                      <span className="kanban-swatch" style={{ background: stage.color }} aria-hidden="true" />
+                      {stage.name}
                     </div>
-                    <div className="kanban-col-count">{stageLeads.length}</div>
+                    <div className="kanban-meta">{formatMoney(stageTotal)} · {stage.probability}% likely</div>
                   </div>
-
-                  <div className="kanban-cards">
-                    {stageLeads.map((lead) => (
-                      <div key={lead.id} className="kanban-card">
-                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
-                          <div style={{ fontSize: '0.8125rem', fontWeight: 700, marginBottom: 6 }}>
-                            {lead.name}
-                          </div>
-                          <RowActions onEdit={() => openEdit(lead)} onDelete={() => setDeleting(lead)} />
-                        </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                          {lead.partner || '—'}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span className="font-bold" style={{ color: 'var(--text-primary)' }}>
-                            {formatMoney(lead.revenue)}
-                          </span>
-                          {lead.user && (
-                            <div className="avatar avatar-sm" title={lead.user}>
-                              {initialsOf(lead.user)}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
-                          <span className={`badge ${lead.tag === 'Hot' ? 'badge-danger' : lead.tag === 'Warm' ? 'badge-warning' : 'badge-soft-primary'}`}>
-                            {lead.tag}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                    {stageLeads.length === 0 && (
-                      <div style={{ padding: '20px 10px', textAlign: 'center', color: 'var(--text-disabled)', fontSize: '0.8125rem', border: '1.5px dashed var(--border)', borderRadius: 'var(--r-lg)' }}>
-                        No leads match your filters.
-                      </div>
-                    )}
-                  </div>
+                  <span className="kanban-count">{stageLeads.length}</span>
                 </div>
-              );
-            })}
-          </div>
-        </>
+
+                <div className="kanban-cards">
+                  {stageLeads.map((lead, i) => (
+                    <article key={lead.id} className="deal reveal-host" style={stagger(i + col)}>
+                      <div className="deal-top">
+                        <div style={{ minWidth: 0 }}>
+                          <div className="deal-name">{lead.name}</div>
+                          <div className="deal-partner truncate">{lead.partner || 'No company'}</div>
+                        </div>
+                        <RowActions label={lead.name} onEdit={() => openEdit(lead)} onDelete={() => setDeleting(lead)} />
+                      </div>
+                      <div className="deal-bottom">
+                        <span className="deal-value">{formatMoney(lead.revenue)}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {lead.tag && <span className={`badge ${TAG_TONE[lead.tag] ?? 'badge-neutral'}`}>{lead.tag}</span>}
+                          {lead.user && (
+                            <span className="avatar avatar-xs filled" style={{ background: 'var(--ink-2)', color: 'var(--paper)' }} title={lead.user}>
+                              {initialsOf(lead.user)}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="meter" title={`${lead.probability}% probability`}>
+                        <i style={{ '--v': Math.min(100, lead.probability) / 100, background: stage.color } as React.CSSProperties} />
+                      </div>
+                    </article>
+                  ))}
+                  {stageLeads.length === 0 && (
+                    <div className="empty-inline">{search ? 'No matches here' : 'Nothing in this stage'}</div>
+                  )}
+                </div>
+              </section>
+            );
+          })}
+        </div>
       )}
 
       {modalOpen && (
@@ -194,7 +173,7 @@ export default function CRMPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete lead?"
+          title="Delete this lead?"
           message={`“${deleting.name}” will be removed from your pipeline. This can’t be undone.`}
           busy={busy}
           onConfirm={handleDelete}

@@ -3,6 +3,7 @@ import { useUIStore, useCurrencyStore } from '../../store';
 import { useDataStore, type DataState } from '../../store/dataStore';
 import { stageById } from '../../lib/crmStages';
 import Icon from './Icon';
+import { stagger, usePresence, useReducedMotion } from '../../lib/motion';
 
 interface Message {
   id: string;
@@ -88,8 +89,8 @@ function answerQuery(query: string, format: Fmt, data: DataState): { text: strin
                 return (
                   <div key={l.id} className="ai-table-row">
                     <span>{l.name || l.partner}</span>
-                    <span style={{ color: stage?.color, fontSize: '0.75rem', fontWeight: 600 }}>{stage?.name ?? l.stage}</span>
-                    <span style={{ fontWeight: 700 }}>{format(l.revenue, true)}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem' }}><i aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: stage?.color, flexShrink: 0 }} />{stage?.name ?? l.stage}</span>
+                    <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{format(l.revenue, true)}</span>
                   </div>
                 );
               })}
@@ -155,9 +156,9 @@ function answerQuery(query: string, format: Fmt, data: DataState): { text: strin
               <div className="ai-table-header"><span>Invoice</span><span>Customer</span><span>Amount</span></div>
               {outstanding.slice(0, 6).map((inv) => (
                 <div key={inv.id} className="ai-table-row">
-                  <span style={{ color: 'var(--accent-text)', fontWeight: 600 }}>{inv.number || inv.id.slice(0, 8)}</span>
+                  <span className="docno">{inv.number || inv.id.slice(0, 8)}</span>
                   <span>{inv.customer}</span>
-                  <span style={{ fontWeight: 700 }}>{format(inv.amount, true)}</span>
+                  <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{format(inv.amount, true)}</span>
                 </div>
               ))}
             </div>
@@ -314,9 +315,9 @@ function answerQuery(query: string, format: Fmt, data: DataState): { text: strin
               <div className="ai-table-header"><span>Order</span><span>Customer</span><span>Total</span></div>
               {top.slice(0, 5).map((o) => (
                 <div key={o.id} className="ai-table-row">
-                  <span style={{ color: 'var(--accent-text)', fontWeight: 600 }}>{o.number || o.id.slice(0, 8)}</span>
+                  <span className="docno">{o.number || o.id.slice(0, 8)}</span>
                   <span>{o.customer}</span>
-                  <span style={{ fontWeight: 700 }}>{format(o.total, true)}</span>
+                  <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{format(o.total, true)}</span>
                 </div>
               ))}
             </div>
@@ -390,7 +391,7 @@ function AIMessage({ msg }: { msg: Message }) {
   return (
     <div className={`ai-msg ${msg.role === 'user' ? 'user' : ''}`}>
       {msg.role === 'assistant' && (
-        <div className="ai-avatar-bubble"><Icon name="spark" size={16} /></div>
+        <div className="ai-avatar-bubble" aria-hidden="true"><Icon name="spark" size={15} /></div>
       )}
       <div className="ai-bubble">
         <p className="ai-bubble-text">{msg.text}</p>
@@ -408,59 +409,80 @@ const welcome = (): Message => ({
   timestamp: new Date(),
 });
 
+/** Brief pause before an answer lands, so the reply reads as a response rather than a flash. */
+const REPLY_DELAY_MS = 420;
+
 export default function AIPanel() {
-  const { aiPanelOpen, setAIPanelOpen } = useUIStore();
+  const aiPanelOpen = useUIStore((s) => s.aiPanelOpen);
+  const setAIPanelOpen = useUIStore((s) => s.setAIPanelOpen);
   const format = useCurrencyStore((s) => s.format);
+  const reduced = useReducedMotion();
   const [messages, setMessages] = useState<Message[]>([welcome()]);
   const [input, setInput] = useState('');
+  const [thinking, setThinking] = useState(false);
   const [activeCategory, setActiveCategory] = useState('All');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { mounted, closing } = usePresence(aiPanelOpen, 240);
 
   const categories = ['All', ...Array.from(new Set(QUICK_PROMPTS.map((p) => p.category)))];
   const filteredPrompts = activeCategory === 'All' ? QUICK_PROMPTS : QUICK_PROMPTS.filter((p) => p.category === activeCategory);
 
   const send = useCallback((query: string) => {
-    if (!query.trim()) return;
+    if (!query.trim() || thinking) return;
     const userMsg: Message = { id: Date.now().toString(), role: 'user', text: query, timestamp: new Date() };
-    const answer = answerQuery(query, format, useDataStore.getState());
-    const reply: Message = { id: `${Date.now()}-a`, role: 'assistant', text: answer.text, data: answer.data, timestamp: new Date() };
-    setMessages((prev) => [...prev, userMsg, reply]);
+    setMessages((prev) => [...prev, userMsg]);
     setInput('');
-  }, [format]);
+    setThinking(true);
+    window.setTimeout(() => {
+      const answer = answerQuery(query, format, useDataStore.getState());
+      const reply: Message = { id: `${Date.now()}-a`, role: 'assistant', text: answer.text, data: answer.data, timestamp: new Date() };
+      setMessages((prev) => [...prev, reply]);
+      setThinking(false);
+    }, reduced ? 0 : REPLY_DELAY_MS);
+  }, [format, reduced, thinking]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    bottomRef.current?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'end' });
+  }, [messages, thinking, reduced]);
 
-  if (!aiPanelOpen) return null;
+  useEffect(() => {
+    if (!aiPanelOpen) return;
+    const t = window.setTimeout(() => inputRef.current?.focus(), 300);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAIPanelOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => { window.clearTimeout(t); document.removeEventListener('keydown', onKey); };
+  }, [aiPanelOpen, setAIPanelOpen]);
+
+  if (!mounted) return null;
 
   return (
     <>
-      <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-overlay)', zIndex: 900 }} onClick={() => setAIPanelOpen(false)} />
-      <div className="ai-panel">
+      <div className={`panel-scrim${closing ? ' is-closing' : ''}`} onClick={() => setAIPanelOpen(false)} aria-hidden="true" />
+      <aside className={`ai-panel${closing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-labelledby="insights-title">
         <div className="ai-panel-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div className="ai-panel-logo"><Icon name="spark" size={18} /></div>
+            <div className="ai-panel-logo" aria-hidden="true"><Icon name="spark" size={18} /></div>
             <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '0.95rem', lineHeight: 1.1, color: 'var(--text-primary)' }}>Insights</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>Answers from your live data</div>
+              <div id="insights-title" style={{ fontWeight: 600, fontSize: 'var(--t-lg)', letterSpacing: '-0.015em', lineHeight: 1.2 }}>Insights</div>
+              <div style={{ fontSize: 'var(--t-xs)', color: 'var(--ink-3)', marginTop: 2 }}>Answers computed from your live data</div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn btn-sm btn-ghost" onClick={() => setMessages([welcome()])}>Clear</button>
-            <button className="topnav-icon-btn" onClick={() => setAIPanelOpen(false)} aria-label="Close"><Icon name="close" size={18} /></button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setMessages([welcome()])}>Clear</button>
+            <button type="button" className="icon-btn" onClick={() => setAIPanelOpen(false)} aria-label="Close insights"><Icon name="close" size={18} /></button>
           </div>
         </div>
 
         <div className="ai-quick-section">
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+          <div className="ai-cats" role="tablist" aria-label="Prompt categories">
             {categories.map((c) => (
-              <button key={c} className={`ai-cat-btn ${activeCategory === c ? 'active' : ''}`} onClick={() => setActiveCategory(c)}>{c}</button>
+              <button key={c} type="button" role="tab" aria-selected={activeCategory === c} className={`ai-cat-btn ${activeCategory === c ? 'active' : ''}`} onClick={() => setActiveCategory(c)}>{c}</button>
             ))}
           </div>
-          <div className="ai-quick-grid">
-            {filteredPrompts.map((p) => (
-              <button key={p.label} className="ai-quick-btn" onClick={() => send(p.query)}>
+          <div className="ai-quick-grid" key={activeCategory}>
+            {filteredPrompts.map((p, i) => (
+              <button key={p.label} type="button" className="ai-quick-btn" style={stagger(i)} onClick={() => send(p.query)} disabled={thinking}>
                 <span className="ai-quick-icon"><Icon name={p.icon} size={15} /></span>
                 <span>{p.label}</span>
               </button>
@@ -468,28 +490,33 @@ export default function AIPanel() {
           </div>
         </div>
 
-        <div className="ai-messages">
+        <div className="ai-messages" aria-live="polite">
           {messages.map((msg) => <AIMessage key={msg.id} msg={msg} />)}
+          {thinking && (
+            <div className="ai-msg">
+              <div className="ai-avatar-bubble" aria-hidden="true"><Icon name="spark" size={15} className="spin" /></div>
+              <div className="ai-bubble"><div className="ai-thinking" aria-label="Working on it"><span /><span /><span /></div></div>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
         <div className="ai-input-area">
-          <div className="ai-input-wrap">
+          <form className="ai-input-wrap" onSubmit={(e) => { e.preventDefault(); send(input); }}>
             <input
+              ref={inputRef}
               className="ai-input"
-              placeholder="Ask about your business data…"
+              placeholder="Ask about revenue, stock, tickets…"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
+              aria-label="Ask a question about your data"
             />
-            <button className="ai-send-btn" onClick={() => send(input)} disabled={!input.trim()} aria-label="Send">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
-              </svg>
+            <button type="submit" className="ai-send-btn" disabled={!input.trim() || thinking} aria-label="Send">
+              <Icon name="arrow-up" size={16} strokeWidth={2.2} />
             </button>
-          </div>
+          </form>
         </div>
-      </div>
+      </aside>
     </>
   );
 }
